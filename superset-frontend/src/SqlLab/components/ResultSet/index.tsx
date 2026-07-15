@@ -250,7 +250,7 @@ const ResultSet = ({
   const reRunQueryIfSessionTimeoutErrorOnMount = useCallback(() => {
     if (
       query.errorMessage &&
-      query.errorMessage.indexOf('session timed out') > 0
+      query.errorMessage.includes('session timed out')
     ) {
       dispatch(reRunQuery(query));
     }
