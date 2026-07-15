@@ -113,6 +113,11 @@ def test_strip_params_noop_on_invalid_json() -> None:
     assert slc.params == "not-json"
 
 
+def test_strip_params_noop_when_extra_form_data_null() -> None:
+    slc = Slice(params=json.dumps({"extra_form_data": None}))
+    assert not _strip_params(slc)
+
+
 def test_strip_query_context_removes_field() -> None:
     slc = Slice(query_context=_contaminated_query_context())
     changed = _strip_query_context(slc)
@@ -136,6 +141,16 @@ def test_strip_query_context_noop_on_invalid_json() -> None:
     changed = _strip_query_context(slc)
     assert not changed
     assert slc.query_context == "not-json"
+
+
+def test_strip_query_context_noop_when_form_data_null() -> None:
+    slc = Slice(query_context=json.dumps({"form_data": None}))
+    assert not _strip_query_context(slc)
+
+
+def test_strip_query_context_noop_when_extra_form_data_null() -> None:
+    slc = Slice(query_context=json.dumps({"form_data": {"extra_form_data": None}}))
+    assert not _strip_query_context(slc)
 
 
 # ---------------------------------------------------------------------------

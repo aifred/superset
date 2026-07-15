@@ -65,7 +65,7 @@ def _strip_params(slc: Slice) -> bool:
     except Exception:
         return False
 
-    extra = params.get("extra_form_data", {})
+    extra = params.get("extra_form_data") or {}
     if _FIELD not in extra:
         return False
 
@@ -84,7 +84,7 @@ def _strip_query_context(slc: Slice) -> bool:
     except Exception:
         return False
 
-    extra = qc.get("form_data", {}).get("extra_form_data", {})
+    extra = (qc.get("form_data") or {}).get("extra_form_data") or {}
     if _FIELD not in extra:
         return False
 
