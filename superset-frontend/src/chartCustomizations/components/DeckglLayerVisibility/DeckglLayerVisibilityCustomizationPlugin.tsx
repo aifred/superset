@@ -75,6 +75,10 @@ export default function DeckglLayerVisibilityCustomizationPlugin(
   );
   const hasInitialized = useRef(false);
 
+  useEffect(() => {
+    setHiddenLayers(filterState?.value ?? []);
+  }, [JSON.stringify(filterState?.value)]);
+
   const allLayerIds = useSelector(selectAllLayerIds);
   const dataMask = useSelector(
     (state: { dataMask?: DataMaskState }) =>

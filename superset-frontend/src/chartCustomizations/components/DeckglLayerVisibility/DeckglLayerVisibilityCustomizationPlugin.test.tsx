@@ -233,6 +233,59 @@ test('initializes with filterState value when provided', async () => {
   });
 });
 
+test('updates selected layers when filterState value changes', async () => {
+  mockSupersetClientGet.mockResolvedValue(mockApiResponse);
+
+  const { rerender } = render(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [1] }}
+    />,
+    {
+      useRedux: true,
+      initialState: {
+        sliceEntities: { slices: mockCharts },
+      },
+    },
+  );
+
+  await waitFor(() => {
+    expect(screen.getByRole('combobox')).not.toBeDisabled();
+  });
+  await userEvent.click(screen.getByRole('combobox'));
+
+  await waitFor(() => {
+    const selectedItems = screen.getAllByRole('option', { selected: true });
+    expect(selectedItems).toHaveLength(1);
+    expect(selectedItems[0]).toHaveTextContent('Scatter Layer (deck_scatter)');
+  });
+
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [2, 3] }}
+    />,
+  );
+
+  await waitFor(() => {
+    const selectedItems = screen.getAllByRole('option', { selected: true });
+    expect(selectedItems).toHaveLength(2);
+    expect(selectedItems[0]).toHaveTextContent('Arc Layer (deck_arc)');
+    expect(selectedItems[1]).toHaveTextContent('Path Layer (deck_path)');
+  });
+
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [] }}
+    />,
+  );
+
+  await waitFor(() => {
+    expect(screen.queryAllByRole('option', { selected: true })).toHaveLength(0);
+  });
+});
+
 test('initializes all layers visible when defaultToAllLayersVisible is true and no prior state', async () => {
   mockSupersetClientGet.mockResolvedValue(mockApiResponse);
   const setDataMaskMock = jest.fn();
