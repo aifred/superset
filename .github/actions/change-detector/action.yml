@@ -31,4 +31,3 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.token }}
-        GITHUB_OUTPUT: ${{ github.output }}
