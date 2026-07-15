@@ -549,6 +549,112 @@ test('Scope boundary: display control with chartsInScope:[] does not affect the 
   expectGroupBy(result, ['original_column']);
 });
 
+test('changing a customization definition busts the cache and updates form data', () => {
+  const cacheSliceId = 987654;
+  const customizationId = 'CHART_CUSTOMIZATION-cache-definition';
+  const sharedFilters = { region: ['Spain'] };
+  const sharedDataMask = {
+    [customizationId]: {
+      id: customizationId,
+      extraFormData: {},
+      filterState: { value: ['status'] },
+      ownState: {},
+    },
+  };
+  const chart = {
+    ...mockChart,
+    id: cacheSliceId,
+    form_data: {
+      ...mockChart.form_data,
+      viz_type: 'table',
+      datasource: '3__table',
+      groupby: ['original_column'],
+    },
+  };
+  const baseArgs: GetFormDataWithExtraFiltersArguments = {
+    ...mockArgs,
+    chart,
+    sliceId: cacheSliceId,
+    allSliceIds: [cacheSliceId],
+    filters: sharedFilters,
+    dataMask: sharedDataMask,
+  };
+
+  // First call: the customization is in scope, so the Dynamic Group By target
+  // replaces the base groupby.
+  const firstResult = getFormDataWithExtraFilters({
+    ...baseArgs,
+    chartCustomizationItems: [
+      createChartCustomization({
+        id: customizationId,
+        chartsInScope: [cacheSliceId],
+      }),
+    ],
+  });
+  expectGroupBy(firstResult, ['status']);
+
+  // Second call: identical filters and data masks, but the customization
+  // definition changed (now out of scope). The result must reflect the new
+  // definition rather than returning the stale cached entry.
+  const secondResult = getFormDataWithExtraFilters({
+    ...baseArgs,
+    chartCustomizationItems: [
+      createChartCustomization({
+        id: customizationId,
+        chartsInScope: [],
+      }),
+    ],
+  });
+  expectGroupBy(secondResult, ['original_column']);
+});
+
+test('identical customization definitions continue to hit the cache', () => {
+  const cacheSliceId = 987655;
+  const customizationId = 'CHART_CUSTOMIZATION-cache-hit';
+  const sharedFilters = { region: ['Spain'] };
+  const sharedDataMask = {
+    [customizationId]: {
+      id: customizationId,
+      extraFormData: {},
+      filterState: { value: ['status'] },
+      ownState: {},
+    },
+  };
+  const chart = {
+    ...mockChart,
+    id: cacheSliceId,
+    form_data: {
+      ...mockChart.form_data,
+      viz_type: 'table',
+      datasource: '3__table',
+      groupby: ['original_column'],
+    },
+  };
+  const customizationItems = [
+    createChartCustomization({
+      id: customizationId,
+      chartsInScope: [cacheSliceId],
+    }),
+  ];
+  const args: GetFormDataWithExtraFiltersArguments = {
+    ...mockArgs,
+    chart,
+    sliceId: cacheSliceId,
+    allSliceIds: [cacheSliceId],
+    filters: sharedFilters,
+    dataMask: sharedDataMask,
+    chartCustomizationItems: customizationItems,
+  };
+
+  // The first call populates the cache; subsequent calls with identical inputs
+  // must return the same cached entry by reference (a genuine cache hit).
+  getFormDataWithExtraFilters(args);
+  const secondResult = getFormDataWithExtraFilters(args);
+  const thirdResult = getFormDataWithExtraFilters(args);
+  expect(thirdResult).toBe(secondResult);
+  expectGroupBy(thirdResult, ['status']);
+});
+
 test('chart customization does not match across datasource ID spaces', () => {
   // A customization targeting semantic_view ``3`` must not match a chart
   // backed by table ``3``: the two have independent ID spaces.

@@ -60,6 +60,7 @@ interface CachedFormData {
   shared_label_colors?: string[];
   map_label_colors?: Record<string, string>;
   chart_customization?: JsonObject;
+  chart_customization_items?: ChartCustomization[];
   layer_filter_scope?: {
     [filterId: string]: number[];
   };
@@ -458,7 +459,14 @@ export default function getFormDataWithExtraFilters({
     }) &&
     areObjectsEqual(cachedFormData?.chart_customization, chartCustomization, {
       ignoreUndefined: true,
-    })
+    }) &&
+    areObjectsEqual(
+      cachedFormData?.chart_customization_items,
+      chartCustomizationItems,
+      {
+        ignoreUndefined: true,
+      },
+    )
   ) {
     return cachedFormData;
   }
@@ -594,6 +602,9 @@ export default function getFormDataWithExtraFilters({
     extraControls,
     nativeFilters,
     ...(chartCustomization && { chart_customization: chartCustomization }),
+    ...(chartCustomizationItems && {
+      chart_customization_items: chartCustomizationItems,
+    }),
   };
 
   return formData;
