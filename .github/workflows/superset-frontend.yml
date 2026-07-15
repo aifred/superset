@@ -102,7 +102,7 @@ jobs:
           path: superset-frontend/coverage
 
   report-coverage:
-    needs: [sharded-jest-tests]
+    needs: [frontend-build, sharded-jest-tests]
     if: needs.frontend-build.outputs.should-run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
