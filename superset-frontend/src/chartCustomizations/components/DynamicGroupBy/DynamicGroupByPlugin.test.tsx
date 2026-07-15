@@ -18,7 +18,12 @@
  */
 import { ChartProps } from '@superset-ui/core';
 import { supersetTheme } from '@apache-superset/core/theme';
-import { render, screen, userEvent } from 'spec/helpers/testing-library';
+import {
+  render,
+  screen,
+  userEvent,
+  waitFor,
+} from 'spec/helpers/testing-library';
 import PluginFilterDynamicGroupBy from './DynamicGroupByPlugin';
 import transformProps from './transformProps';
 import { PluginFilterGroupByProps } from './types';
@@ -46,17 +51,35 @@ const baseProps = {
   },
 };
 
-const renderPlugin = (sortAscending?: boolean) => {
+interface RenderPluginOptions {
+  canSelectMultiple?: boolean;
+  filterStateValue?: string | string[] | null;
+  sortAscending?: boolean;
+}
+
+const renderPlugin = ({
+  canSelectMultiple,
+  filterStateValue = [],
+  sortAscending,
+}: RenderPluginOptions = {}) => {
+  const setDataMask = jest.fn();
   const chartProps = new ChartProps({
     ...baseProps,
-    formData: { ...baseProps.formData, sortAscending },
+    filterState: { value: filterStateValue },
+    hooks: { setDataMask },
+    formData: {
+      ...baseProps.formData,
+      canSelectMultiple,
+      sortAscending,
+    },
     theme: supersetTheme,
   });
-  return render(
+  const renderResult = render(
     <PluginFilterDynamicGroupBy
       {...(transformProps(chartProps) as unknown as PluginFilterGroupByProps)}
     />,
   );
+  return { ...renderResult, setDataMask };
 };
 
 const getOpenedOptionOrder = async () => {
@@ -66,16 +89,64 @@ const getOpenedOptionOrder = async () => {
 };
 
 test('sorts display control values A-Z when sortAscending is true', async () => {
-  renderPlugin(true);
+  renderPlugin({ sortAscending: true });
   expect(await getOpenedOptionOrder()).toEqual(['apple', 'banana', 'cherry']);
 });
 
 test('sorts display control values Z-A when sortAscending is false', async () => {
-  renderPlugin(false);
+  renderPlugin({ sortAscending: false });
   expect(await getOpenedOptionOrder()).toEqual(['cherry', 'banana', 'apple']);
 });
 
 test('preserves source order when sorting is disabled', async () => {
-  renderPlugin(undefined);
+  renderPlugin();
   expect(await getOpenedOptionOrder()).toEqual(['banana', 'apple', 'cherry']);
+});
+
+test('renders a single select and normalizes the data mask value', async () => {
+  const { setDataMask } = renderPlugin({
+    canSelectMultiple: false,
+    filterStateValue: ['banana', 'apple'],
+  });
+
+  expect(screen.getAllByRole('combobox')[0].closest('.ant-select')).toHaveClass(
+    'ant-select-single',
+  );
+  await waitFor(() =>
+    expect(setDataMask).toHaveBeenLastCalledWith({
+      extraFormData: {
+        custom_form_data: {
+          groupby: ['banana'],
+        },
+      },
+      filterState: {
+        label: 'banana',
+        value: 'banana',
+      },
+    }),
+  );
+});
+
+test('retains multiple selection values in the data mask', async () => {
+  const { setDataMask } = renderPlugin({
+    canSelectMultiple: true,
+    filterStateValue: ['banana', 'apple'],
+  });
+
+  expect(screen.getAllByRole('combobox')[0].closest('.ant-select')).toHaveClass(
+    'ant-select-multiple',
+  );
+  await waitFor(() =>
+    expect(setDataMask).toHaveBeenLastCalledWith({
+      extraFormData: {
+        custom_form_data: {
+          groupby: ['banana', 'apple'],
+        },
+      },
+      filterState: {
+        label: 'banana, apple',
+        value: ['banana', 'apple'],
+      },
+    }),
+  );
 });

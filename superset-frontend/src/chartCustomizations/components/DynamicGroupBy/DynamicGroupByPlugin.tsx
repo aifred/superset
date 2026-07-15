@@ -32,6 +32,16 @@ import { PluginFilterGroupByProps, ColumnOption, ColumnData } from './types';
 
 const EMPTY_OBJECT = {};
 
+const normalizeValue = (
+  value: SelectValue,
+  canSelectMultiple: boolean,
+): string | string[] | null => {
+  const values = ensureIsArray<string>(
+    value as string | string[] | null | undefined,
+  );
+  return canSelectMultiple ? values : (values[0] ?? null);
+};
+
 export default function PluginFilterDynamicGroupBy(
   props: PluginFilterGroupByProps,
 ) {
@@ -49,15 +59,16 @@ export default function PluginFilterDynamicGroupBy(
     filterState,
     inputRef,
   } = props;
-  const { defaultValue } = formData;
+  const { canSelectMultiple = true, defaultValue } = formData;
 
-  const [value, setValue] = useState<string[]>(
-    ensureIsArray<string>(defaultValue ?? []),
+  const [value, setValue] = useState<SelectValue>(
+    normalizeValue(defaultValue ?? null, canSelectMultiple),
   );
 
   const handleChange = (values: SelectValue) => {
-    const resultValue: string[] = ensureIsArray<string>(
-      values as string | string[] | null | undefined,
+    const normalizedValue = normalizeValue(values, canSelectMultiple);
+    const resultValue = ensureIsArray<string>(
+      normalizedValue as string | string[] | null,
     );
 
     const extraFormData: ExtraFormData = {
@@ -66,23 +77,23 @@ export default function PluginFilterDynamicGroupBy(
       },
     };
 
-    setValue(resultValue);
+    setValue(normalizedValue);
     setDataMask({
       extraFormData,
       filterState: {
         label: resultValue.join(', '),
-        value: resultValue.length ? resultValue : null,
+        value: resultValue.length ? normalizedValue : null,
       },
     });
   };
 
   useEffect(() => {
     handleChange(defaultValue ?? []);
-  }, [JSON.stringify(defaultValue)]);
+  }, [JSON.stringify(defaultValue), canSelectMultiple]);
 
   useEffect(() => {
     handleChange(filterState.value ?? []);
-  }, [JSON.stringify(filterState.value)]);
+  }, [JSON.stringify(filterState.value), canSelectMultiple]);
 
   const placeholderText =
     (data || []).length === 0
@@ -139,7 +150,7 @@ export default function PluginFilterDynamicGroupBy(
           <Select
             name={formData.nativeFilterId}
             allowClear
-            mode="multiple"
+            mode={canSelectMultiple ? 'multiple' : undefined}
             value={value}
             placeholder={placeholderText}
             onChange={handleChange}
