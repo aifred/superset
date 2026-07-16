@@ -124,21 +124,12 @@ jobs:
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
 
       - name: Escalate to human review
-        if: >
-          failure() ||
-          steps.issue_key.outputs.issue_key == '' ||
-          steps.verdict.outputs.verdict == 'needs_human'
+        if: failure() || steps.verdict.outputs.verdict == 'needs_human'
         env:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
         run: |
-          if [ -z "$ISSUE_KEY" ]; then
-            REASON="No Jira issue key found in the PR title or branch name."
-          else
-            REASON="Reviewer escalated this PR to human review."
-          fi
-          printf '%s\n' "Auto-ship review stopped: $REASON" > comment.md
+          printf '%s\n' "Auto-ship review stopped: Reviewer escalated this PR to human review." > comment.md
           gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human" || true
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
 
@@ -160,7 +151,8 @@ jobs:
             const issueKey = process.env.ISSUE_KEY;
 
             if (!issueKey) {
-              summary = 'No Jira issue key found in PR title or branch.';
+              conclusion = 'neutral';
+              summary = 'No Jira issue key; auto-ship review skipped.';
             } else if (verdict === 'approve' && gate === 'pass') {
               conclusion = 'success';
               summary = 'Reviewer approved and policy gate passed.';
@@ -312,7 +304,8 @@ jobs:
           private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-          permissions: '{"contents": "write", "pull_requests": "write"}'
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Approve and enable auto-merge
         env:
