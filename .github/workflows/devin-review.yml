@@ -312,9 +312,7 @@ jobs:
           private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
-          permissions:
-            contents: write
-            pull_requests: write
+          permissions: '{"contents": "write", "pull_requests": "write"}'
 
       - name: Approve and enable auto-merge
         env:
