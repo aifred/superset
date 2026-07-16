@@ -20,6 +20,7 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
+      statuses: write
     outputs:
       issue_key: ${{ steps.issue_key.outputs.issue_key }}
     env:
