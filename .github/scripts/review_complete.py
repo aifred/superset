@@ -83,6 +83,23 @@ def write_verdict(verdict: dict[str, Any]) -> None:
         json.dump(verdict, f)
 
 
+def _allowed_commenters() -> set[str]:
+    """Return the set of permitted commenter logins for verdict comments."""
+    raw = os.environ.get("ALLOWED_COMMENTERS", "")
+    if not raw:
+        return {"github-actions[bot]", "devin-ai-integration[bot]"}
+    return {c.strip() for c in raw.split(",") if c.strip()}
+
+
+def _is_authorized_commenter() -> bool:
+    """Only accept verdict comments from known review bots."""
+    author = os.environ.get("COMMENT_AUTHOR", "")
+    author_type = os.environ.get("COMMENT_AUTHOR_TYPE", "")
+    if author_type != "Bot":
+        return False
+    return author in _allowed_commenters()
+
+
 def _write_outputs(
     valid: str,
     stale: str,
@@ -120,6 +137,12 @@ def main() -> int:
     issue_key = ""
 
     try:
+        if not _is_authorized_commenter():
+            raise SystemExit(
+                f"Comment author {os.environ.get('COMMENT_AUTHOR', 'unknown')!r} "
+                f"is not an authorized reviewer bot"
+            )
+
         pr = pr_view("id,headRefOid,headRefName,title")
         pr_head_sha = pr.get("headRefOid") or ""
         node_id = pr.get("id") or ""
@@ -133,7 +156,7 @@ def main() -> int:
         run_id = str(verdict.get("run_id", ""))
         if comment_sha and pr_head_sha and comment_sha != pr_head_sha:
             stale = "true"
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
         print(f"Verdict parse failed: {exc}", file=sys.stderr)
 
     _write_outputs(

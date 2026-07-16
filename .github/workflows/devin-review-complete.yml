@@ -29,6 +29,9 @@ jobs:
       REPO: ${{ github.repository }}
       PR_NUMBER: ${{ github.event.issue.number }}
       COMMENT_BODY: ${{ github.event.comment.body }}
+      COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+      COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}
+      ALLOWED_COMMENTERS: ${{ vars.DEVIN_REVIEWER_LOGINS || 'github-actions[bot],devin-ai-integration[bot]' }}
       DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
       DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
       JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || secrets.JIRA_BASE_URL }}
