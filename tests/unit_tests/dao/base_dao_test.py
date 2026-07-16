@@ -260,10 +260,10 @@ def test_find_by_ids_none_id_column():
         assert results == []
 
 
-def _list_with_page_size(page_size: int) -> Mock:
+def _list_with_page_size(page_size: int, page: int = 0) -> Mock:
     """
     Run ``BaseDAO.list`` with a mocked query chain and return the mock query so
-    the ``.limit()`` call (the effective page size) can be inspected.
+    the ``.offset()`` and ``.limit()`` calls can be inspected.
     """
     mock_query = Mock()
     # Every chainable call returns the same mock so the chain is easy to inspect
@@ -282,7 +282,7 @@ def _list_with_page_size(page_size: int) -> Mock:
         patch("superset.daos.base.SQLAInterface", return_value=mock_data_model),
         patch.object(TestDAO, "_apply_base_filter", side_effect=lambda q, **_: q),
     ):
-        TestDAO.list(page=0, page_size=page_size)
+        TestDAO.list(page=page, page_size=page_size)
 
     return mock_query
 
@@ -309,6 +309,22 @@ def test_list_page_size_below_one_is_floored():
     mock_query = _list_with_page_size(0)
 
     mock_query.limit.assert_called_once_with(1)
+
+
+def test_list_negative_page_uses_first_page_offset():
+    """A negative page uses the same offset as page zero."""
+    negative_page_query = _list_with_page_size(50, page=-1)
+    first_page_query = _list_with_page_size(50, page=0)
+
+    negative_page_query.offset.assert_called_once_with(0)
+    first_page_query.offset.assert_called_once_with(0)
+
+
+def test_list_nonnegative_page_offset_is_unchanged():
+    """A positive page retains the expected page-size-based offset."""
+    mock_query = _list_with_page_size(50, page=2)
+
+    mock_query.offset.assert_called_once_with(100)
 
 
 def test_like_operators_none_value_matches_no_rows() -> None:
