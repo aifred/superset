@@ -233,6 +233,79 @@ test('initializes with filterState value when provided', async () => {
   });
 });
 
+test('syncs the Select value when filterState.value changes externally', async () => {
+  mockSupersetClientGet.mockResolvedValue(mockApiResponse);
+
+  const { rerender } = render(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [1] }}
+    />,
+    {
+      useRedux: true,
+      initialState: {
+        sliceEntities: { slices: mockCharts },
+      },
+    },
+  );
+
+  await waitFor(() => {
+    expect(
+      screen.getByTitle('Scatter Layer (deck_scatter)'),
+    ).toBeInTheDocument();
+  });
+
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [4] }}
+    />,
+  );
+
+  await waitFor(() => {
+    expect(screen.getByTitle('Hex Layer (deck_hex)')).toBeInTheDocument();
+  });
+  expect(
+    screen.queryByTitle('Scatter Layer (deck_scatter)'),
+  ).not.toBeInTheDocument();
+});
+
+test('syncs the Select value to empty when filterState is cleared externally', async () => {
+  mockSupersetClientGet.mockResolvedValue(mockApiResponse);
+
+  const { rerender } = render(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [1] }}
+    />,
+    {
+      useRedux: true,
+      initialState: {
+        sliceEntities: { slices: mockCharts },
+      },
+    },
+  );
+
+  await waitFor(() => {
+    expect(
+      screen.getByTitle('Scatter Layer (deck_scatter)'),
+    ).toBeInTheDocument();
+  });
+
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [] }}
+    />,
+  );
+
+  await waitFor(() => {
+    expect(
+      screen.queryByTitle('Scatter Layer (deck_scatter)'),
+    ).not.toBeInTheDocument();
+  });
+});
+
 test('initializes all layers visible when defaultToAllLayersVisible is true and no prior state', async () => {
   mockSupersetClientGet.mockResolvedValue(mockApiResponse);
   const setDataMaskMock = jest.fn();
