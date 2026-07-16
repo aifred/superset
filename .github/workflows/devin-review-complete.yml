@@ -353,10 +353,13 @@ jobs:
             const sha = process.env.SHA;
             const outcome = process.env.OUTCOME;
 
-            // While waiting for the verdict or CI to settle, leave the pending
-            // status in place rather than flapping it to failure.
-            if (outcome === 'waiting') {
-              console.log('Still waiting for verdict/CI; leaving status unchanged');
+            // Leave the head's status untouched while waiting for the verdict
+            // or CI to settle. 'stale' means the verdict was for an older
+            // commit and the current head is unreviewed, so we must NOT mark it
+            // success — leaving the pending status that devin-review.yml sets on
+            // each new head forces a fresh review before it can merge.
+            if (outcome === 'waiting' || outcome === 'stale') {
+              console.log(`Outcome '${outcome}': leaving head status unchanged`);
               return;
             }
 
@@ -383,10 +386,6 @@ jobs:
               case 'ci_failed':
                 state = 'failure';
                 description = 'Reviewer approved but CI failed.';
-                break;
-              case 'stale':
-                state = 'success';
-                description = 'Review comment is for an older commit; ignored.';
                 break;
             }
 
