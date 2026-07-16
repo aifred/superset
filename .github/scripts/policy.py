@@ -65,11 +65,12 @@ def gh(fields: str) -> dict[str, Any]:
     return json.loads(out.stdout)
 
 
-def required_status_checks(pr_node_id: str) -> list[dict[str, Any]]:
+def required_status_checks(pr_node_id: str) -> list[dict[str, Any]] | None:
     """Fetch checks with isRequired populated via GitHub GraphQL.
 
-    `gh pr view --json statusCheckRollup` does not include `isRequired`,
-    which would make the gate fall back to evaluating every check.
+    Returns None when the GraphQL call fails, so callers can fall back to the
+    REST-shaped statusCheckRollup from `gh pr view`. Returns an empty list
+    only when the call succeeded but no contexts were returned.
     """
     query = """
     query($prId: ID!) {
@@ -111,12 +112,12 @@ def required_status_checks(pr_node_id: str) -> list[dict[str, Any]]:
     )
     if proc.returncode != 0:
         print(f"GraphQL warning: {proc.stderr.strip()}", file=sys.stderr)
-        return []
+        return None
 
     data = json.loads(proc.stdout)
     if "errors" in data:
         print(f"GraphQL errors: {data['errors']}", file=sys.stderr)
-        return []
+        return None
     contexts = (
         data.get("data", {})
         .get("node", {})
@@ -174,9 +175,14 @@ def main() -> int:
         if any(path.startswith(p) for p in FORBIDDEN) or LOCK_RE.search(path):
             return fail(f"forbidden path touched: {path}")
 
+    checks: list[dict[str, Any]]
     if pr_node_id := os.environ.get("PR_NODE_ID") or pr.get("id"):
-        checks = required_status_checks(pr_node_id)
+        ghql_checks = required_status_checks(pr_node_id)
+        checks = ghql_checks if ghql_checks is not None else []
     else:
+        checks = []
+
+    if not checks:
         raw = pr.get("statusCheckRollup") or []
         if isinstance(raw, dict):
             raw = raw.get("nodes") or []

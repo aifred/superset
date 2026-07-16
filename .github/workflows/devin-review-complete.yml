@@ -260,7 +260,7 @@ jobs:
                 description = 'Reviewer approved but policy gate failed.';
                 break;
               case 'stale':
-                state = 'neutral';
+                state = 'success';
                 description = 'Review comment is for an older commit; ignored.';
                 break;
               case 'parse_failed':
