@@ -233,6 +233,76 @@ test('initializes with filterState value when provided', async () => {
   });
 });
 
+test('syncs selected layers when filterState changes externally', async () => {
+  mockSupersetClientGet.mockResolvedValue(mockApiResponse);
+
+  const { rerender } = render(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [1] }}
+    />,
+    {
+      useRedux: true,
+      initialState: {
+        sliceEntities: { slices: mockCharts },
+      },
+    },
+  );
+
+  await waitFor(() => {
+    expect(
+      screen.getByText('Scatter Layer (deck_scatter)'),
+    ).toBeInTheDocument();
+  });
+
+  const select = screen.getByRole('combobox');
+  await userEvent.click(select);
+
+  await waitFor(() => {
+    expect(
+      screen.getByRole('option', {
+        name: 'Scatter Layer (deck_scatter)',
+        selected: true,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [2, 3] }}
+    />,
+  );
+
+  await waitFor(() => {
+    const selectedItems = screen.getAllByRole('option', { selected: true });
+    expect(selectedItems).toHaveLength(2);
+    expect(
+      screen.getByRole('option', {
+        name: 'Arc Layer (deck_arc)',
+        selected: true,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', {
+        name: 'Path Layer (deck_path)',
+        selected: true,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{}}
+    />,
+  );
+
+  await waitFor(() => {
+    expect(screen.queryAllByRole('option', { selected: true })).toHaveLength(0);
+  });
+});
+
 test('initializes all layers visible when defaultToAllLayersVisible is true and no prior state', async () => {
   mockSupersetClientGet.mockResolvedValue(mockApiResponse);
   const setDataMaskMock = jest.fn();
