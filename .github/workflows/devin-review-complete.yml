@@ -113,24 +113,21 @@ jobs:
 
       - name: Approve and enable auto-merge
         id: approve
+        # 'escalated != true' is a hard stop: once a PR carries needs-human,
+        # a later approve verdict must not silently re-approve/auto-merge it.
+        # Auto-ship resumes only after a human removes the label.
         if: >
           steps.rc.outputs.has_verdict == 'true' &&
           steps.rc.outputs.stale != 'true' &&
           steps.rc.outputs.verdict == 'approve' &&
           steps.rc.outputs.ci_status == 'success' &&
+          steps.rc.outputs.escalated != 'true' &&
           steps.policy.outputs.result == 'pass'
         env:
           GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
         run: |
-          # A prior escalation to needs-human is a hard stop: don't let a later
-          # approve verdict silently re-approve and auto-merge a PR a human was
-          # asked to review. Auto-ship resumes once a human removes the label.
-          if gh pr view "$PR_NUMBER" --repo "$REPO" --json labels -q '.labels[].name' | grep -qx "needs-human"; then
-            echo "PR is labelled needs-human; refusing to auto-approve/merge."
-            exit 0
-          fi
           gh pr review "$PR_NUMBER" --repo "$REPO" --approve --body "Auto-ship policy gate passed — approved by auto-ship." || true
           gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash
 
@@ -333,8 +330,14 @@ jobs:
           VERDICT: ${{ steps.rc.outputs.verdict }}
           CI: ${{ steps.rc.outputs.ci_status }}
           GATE: ${{ steps.policy.outputs.result }}
+          ESCALATED: ${{ steps.rc.outputs.escalated }}
         run: |
-          if [ "$STALE" = "true" ]; then
+          # An existing needs-human escalation dominates: keep the outcome (and
+          # thus the devin-review status) as needs_human so a later approve
+          # verdict can't flip the gate check back to green behind a human.
+          if [ "$ESCALATED" = "true" ]; then
+            echo "result=needs_human" >> "$GITHUB_OUTPUT"
+          elif [ "$STALE" = "true" ]; then
             echo "result=stale" >> "$GITHUB_OUTPUT"
           elif [ "$HAS_VERDICT" != "true" ]; then
             echo "result=waiting" >> "$GITHUB_OUTPUT"

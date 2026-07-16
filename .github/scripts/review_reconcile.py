@@ -157,9 +157,15 @@ def _fetch_pr(repo: str, pr_number: str) -> Any:
             "--repo",
             repo,
             "--json",
-            "id,headRefOid,headRefName,title,statusCheckRollup",
+            "id,headRefOid,headRefName,title,statusCheckRollup,labels",
         ]
     )
+
+
+def _is_escalated(pr: dict[str, Any]) -> bool:
+    """Return True if the PR already carries the needs-human escalation label."""
+    labels = pr.get("labels") or []
+    return any(label.get("name") == "needs-human" for label in labels)
 
 
 def _ci_status(node_id: str, pr: dict[str, Any]) -> str:
@@ -183,8 +189,12 @@ def _ci_status(node_id: str, pr: dict[str, Any]) -> str:
     required = [c for c in checks if c.get("isRequired")]
     to_check = required if required else checks
     if not to_check:
-        # No checks to evaluate: let the deterministic gate make the call.
-        return "success"
+        # No checks have registered yet (the gate's own devin-review check is
+        # excluded). Treat this as still-pending rather than success so a fast
+        # verdict landing before CI appears waits for a later event instead of
+        # being handed to the deterministic gate, which fails closed on an empty
+        # check set and would prematurely escalate to human review.
+        return "pending"
 
     pending = False
     for c in to_check:
@@ -206,6 +216,7 @@ def main() -> int:
     node_id = ""
     head_sha = ""
     ci_status = "pending"
+    escalated = "false"
 
     pr_number = _resolve_pr_number(repo)
     if not pr_number:
@@ -222,6 +233,7 @@ def main() -> int:
     node_id = pr.get("id") or ""
     head_sha = pr.get("headRefOid") or ""
     issue_key = review_complete.extract_issue_key(pr)
+    escalated = "true" if _is_escalated(pr) else "false"
 
     # For workflow_run events, ignore CI that ran against a superseded commit;
     # a newer push will produce its own completion event.
@@ -269,6 +281,7 @@ def main() -> int:
         ci_status,
         node_id,
         head_sha,
+        escalated,
     )
     return 0
 
@@ -282,6 +295,7 @@ def _emit(
     ci_status: str,
     node_id: str = "",
     head_sha: str = "",
+    escalated: str = "false",
 ) -> None:
     set_output("pr_number", pr_number)
     set_output("has_verdict", has_verdict)
@@ -291,6 +305,7 @@ def _emit(
     set_output("ci_status", ci_status)
     set_output("node_id", node_id)
     set_output("head_sha", head_sha)
+    set_output("escalated", escalated)
     print(
         f"pr={pr_number} has_verdict={has_verdict} verdict={verdict} "
         f"stale={stale} ci_status={ci_status}"
