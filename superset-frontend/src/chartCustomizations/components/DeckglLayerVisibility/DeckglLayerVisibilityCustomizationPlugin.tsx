@@ -125,6 +125,10 @@ export default function DeckglLayerVisibilityCustomizationPlugin(
     setDataMask,
   ]);
 
+  useEffect(() => {
+    setHiddenLayers(filterState?.value ?? []);
+  }, [JSON.stringify(filterState?.value)]);
+
   const formItemData: FormItemProps = useMemo(() => {
     if (filterState.validateMessage) {
       return {

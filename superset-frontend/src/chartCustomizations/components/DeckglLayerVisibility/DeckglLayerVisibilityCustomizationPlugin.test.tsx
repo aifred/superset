@@ -233,6 +233,65 @@ test('initializes with filterState value when provided', async () => {
   });
 });
 
+test('syncs Select value when filterState.value changes externally', async () => {
+  mockSupersetClientGet.mockResolvedValue(mockApiResponse);
+
+  const { rerender } = render(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [1, 2] }}
+    />,
+    {
+      useRedux: true,
+      initialState: {
+        sliceEntities: { slices: mockCharts },
+      },
+    },
+  );
+
+  await waitFor(() => {
+    expect(
+      screen.getByTestId('deckgl-layer-visibility-select'),
+    ).toBeInTheDocument();
+  });
+
+  const select = screen.getByRole('combobox');
+  await userEvent.click(select);
+  await waitFor(() => {
+    expect(screen.getAllByRole('option', { selected: true })).toHaveLength(2);
+  });
+  await userEvent.click(select);
+
+  // Simulate an external clear/reset of the filter state
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [] }}
+    />,
+  );
+
+  await userEvent.click(select);
+  await waitFor(() => {
+    expect(screen.queryAllByRole('option', { selected: true })).toHaveLength(0);
+  });
+  await userEvent.click(select);
+
+  // Simulate undo/redo or permalink restoration to a different value
+  rerender(
+    <DeckglLayerVisibilityCustomizationPlugin
+      {...defaultProps}
+      filterState={{ value: [3] }}
+    />,
+  );
+
+  await userEvent.click(select);
+  await waitFor(() => {
+    const selectedItems = screen.getAllByRole('option', { selected: true });
+    expect(selectedItems).toHaveLength(1);
+    expect(selectedItems[0]).toHaveTextContent('Path Layer (deck_path)');
+  });
+});
+
 test('initializes all layers visible when defaultToAllLayersVisible is true and no prior state', async () => {
   mockSupersetClientGet.mockResolvedValue(mockApiResponse);
   const setDataMaskMock = jest.fn();
