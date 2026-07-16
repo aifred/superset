@@ -300,6 +300,52 @@ describe('ResultSet', () => {
     );
   });
 
+  test('should call reRunQuery when the error message starts with the phrase', async () => {
+    const query = {
+      ...queries[0],
+      errorMessage: 'session timed out, please retry',
+    };
+    const store = mockStore({
+      ...initialState,
+      user,
+      sqlLab: {
+        ...initialState.sqlLab,
+        queries: {
+          [query.id]: query,
+        },
+      },
+    });
+
+    expect(fetchMock.callHistory.calls(reRunQueryEndpoint)).toHaveLength(0);
+    setup(mockedProps, store);
+    expect(store.getActions()).toHaveLength(1);
+    expect(store.getActions()[0].type).toEqual('START_QUERY');
+    await waitFor(() =>
+      expect(fetchMock.callHistory.calls(reRunQueryEndpoint)).toHaveLength(1),
+    );
+  });
+
+  test('should not call reRunQuery if the error is unrelated', async () => {
+    const query = {
+      ...queries[0],
+      errorMessage: 'Syntax error near line 1',
+    };
+    const store = mockStore({
+      ...initialState,
+      user,
+      sqlLab: {
+        ...initialState.sqlLab,
+        queries: {
+          [query.id]: query,
+        },
+      },
+    });
+
+    setup(mockedProps, store);
+    expect(store.getActions()).toEqual([]);
+    expect(fetchMock.callHistory.calls(reRunQueryEndpoint)).toHaveLength(0);
+  });
+
   test('should not call reRunQuery if no error', async () => {
     const query = queries[0];
     const store = mockStore({
