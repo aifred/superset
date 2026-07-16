@@ -28,6 +28,18 @@ from typing import Any
 DEVIN_API_BASE = "https://api.devin.ai"
 
 
+def _parse_dt(value: Any) -> datetime | None:
+    """Parse a Devin timestamp that may be an epoch or ISO-8601 string."""
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
 def env_var(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -92,10 +104,13 @@ def classify_sessions(
             fix = session
         else:
             # Earliest author session wins, in case duplicates exist.
-            if author is None or session.get("created_at", 0) < author.get(
-                "created_at", float("inf")
-            ):
+            session_created = _parse_dt(session.get("created_at"))
+            if author is None:
                 author = session
+            elif session_created is not None:
+                author_created = _parse_dt(author.get("created_at"))
+                if author_created is None or session_created < author_created:
+                    author = session
     return {"author": author, "reviewer": reviewer, "fix": fix}
 
 
@@ -107,12 +122,13 @@ def terminate_session(session: dict[str, Any]) -> None:
     print(f"Terminated author session {session_id}")
 
 
-def format_cycle_time(author_created_at: int, merged_at: str) -> str:
-    try:
-        merged_dt = datetime.fromisoformat(merged_at.replace("Z", "+00:00"))
-    except ValueError:
+def format_cycle_time(author_created_at: int | float | str, merged_at: str) -> str:
+    merged_dt = _parse_dt(merged_at)
+    if merged_dt is None:
         return "unknown"
-    created_dt = datetime.fromtimestamp(author_created_at, tz=timezone.utc)
+    created_dt = _parse_dt(author_created_at)
+    if created_dt is None:
+        return "unknown"
     delta = merged_dt - created_dt
     total_minutes = int(delta.total_seconds() // 60)
     if total_minutes < 60:
