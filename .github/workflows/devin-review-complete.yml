@@ -3,9 +3,12 @@ name: Devin auto-ship review complete
 on:
   issue_comment:
     types: [created]
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
 
 concurrency:
-  group: devin-review-complete-${{ github.event.issue.number }}
+  group: devin-review-complete-${{ github.event.issue.number || github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 permissions: {}
@@ -13,9 +16,15 @@ permissions: {}
 jobs:
   complete:
     runs-on: ubuntu-24.04
+    # Re-run on both the reviewer verdict comment and any CI workflow finishing
+    # for a PR head, then reconcile the current state. Ordering does not matter:
+    # whichever input settles last triggers the check that lets the gate proceed.
     if: >
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '### Devin review verdict')
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '### Devin review verdict')) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request')
     permissions:
       contents: write
       pull-requests: write
@@ -26,11 +35,8 @@ jobs:
       result: ${{ steps.outcome.outputs.result }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
       REPO: ${{ github.repository }}
-      PR_NUMBER: ${{ github.event.issue.number }}
-      COMMENT_BODY: ${{ github.event.comment.body }}
-      COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
-      COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}
       ALLOWED_COMMENTERS: ${{ vars.DEVIN_REVIEWER_LOGINS || 'github-actions[bot],devin-ai-integration[bot]' }}
       DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
       DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
@@ -44,16 +50,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Parse verdict comment
-        id: parse
-        run: python3 .github/scripts/review_complete.py parse
+      - name: Reconcile verdict and CI status
+        id: rc
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          IS_PULL_REQUEST: ${{ github.event.issue.pull_request != null }}
+          WF_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WF_PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+        run: python3 .github/scripts/review_reconcile.py
 
       - name: Run deterministic policy gate
         id: policy
-        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.stale != 'true' && steps.parse.outputs.verdict == 'approve'
+        if: >
+          steps.rc.outputs.pr_number != '' &&
+          steps.rc.outputs.has_verdict == 'true' &&
+          steps.rc.outputs.stale != 'true' &&
+          steps.rc.outputs.verdict == 'approve' &&
+          steps.rc.outputs.ci_status == 'success'
         env:
-          PR_NUMBER: ${{ github.event.issue.number }}
-          PR_NODE_ID: ${{ steps.parse.outputs.node_id }}
+          PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
+          PR_NODE_ID: ${{ steps.rc.outputs.node_id }}
           DEVIN_VERDICT: verdict.json
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -65,7 +82,9 @@ jobs:
 
       - name: Check for policy-bot app
         id: bot_config
-        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.stale != 'true'
+        if: >
+          steps.rc.outputs.has_verdict == 'true' &&
+          steps.rc.outputs.stale != 'true'
         env:
           POLICY_BOT_APP_ID: ${{ secrets.POLICY_BOT_APP_ID }}
           POLICY_BOT_APP_PRIVATE_KEY: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
@@ -91,39 +110,43 @@ jobs:
       - name: Approve and enable auto-merge
         id: approve
         if: >
-          steps.parse.outputs.valid == 'true' &&
-          steps.parse.outputs.stale != 'true' &&
-          steps.parse.outputs.verdict == 'approve' &&
+          steps.rc.outputs.has_verdict == 'true' &&
+          steps.rc.outputs.stale != 'true' &&
+          steps.rc.outputs.verdict == 'approve' &&
+          steps.rc.outputs.ci_status == 'success' &&
           steps.policy.outputs.result == 'pass'
         env:
           GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
         run: |
-          gh pr review "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --approve --body "Auto-ship policy gate passed — approved by auto-ship."
-          gh pr merge "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --auto --squash
+          gh pr review "$PR_NUMBER" --repo "$REPO" --approve --body "Auto-ship policy gate passed — approved by auto-ship." || true
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash
 
       - name: Request changes
         if: >
-          steps.parse.outputs.valid == 'true' &&
-          steps.parse.outputs.stale != 'true' &&
-          steps.parse.outputs.verdict == 'request_changes'
+          steps.rc.outputs.has_verdict == 'true' &&
+          steps.rc.outputs.stale != 'true' &&
+          steps.rc.outputs.verdict == 'request_changes'
         env:
           GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
         run: |
           gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested" --remove-label "automerge:eligible" || true
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body "Devin reviewer requested changes; fix session has been triggered."
 
       - name: Escalate to human review
         if: >
-          steps.parse.outputs.valid == 'true' &&
-          steps.parse.outputs.stale != 'true' &&
-          steps.parse.outputs.verdict == 'needs_human'
+          steps.rc.outputs.has_verdict == 'true' &&
+          steps.rc.outputs.stale != 'true' &&
+          steps.rc.outputs.verdict == 'needs_human'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_KEY: ${{ steps.parse.outputs.issue_key }}
+          PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
+          ISSUE_KEY: ${{ steps.rc.outputs.issue_key }}
+          PR_URL: https://github.com/${{ github.repository }}/pull/${{ steps.rc.outputs.pr_number }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, urllib.request
@@ -160,15 +183,17 @@ jobs:
 
       - name: Escalate on policy failure
         if: >
-          steps.parse.outputs.valid == 'true' &&
-          steps.parse.outputs.stale != 'true' &&
-          steps.parse.outputs.verdict == 'approve' &&
+          steps.rc.outputs.has_verdict == 'true' &&
+          steps.rc.outputs.stale != 'true' &&
+          steps.rc.outputs.verdict == 'approve' &&
+          steps.rc.outputs.ci_status == 'success' &&
           steps.policy.outputs.result == 'fail'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_KEY: ${{ steps.parse.outputs.issue_key }}
+          PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
+          ISSUE_KEY: ${{ steps.rc.outputs.issue_key }}
+          PR_URL: https://github.com/${{ github.repository }}/pull/${{ steps.rc.outputs.pr_number }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, urllib.request
@@ -182,7 +207,7 @@ jobs:
               subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
 
           gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested', '--remove-label', 'automerge:eligible'])
-          gh(['comment', PR_NUMBER, '--body', f"{REASON}\n\nThis usually means CI is not green, the diff exceeds the policy limit, or a forbidden path was touched."])
+          gh(['comment', PR_NUMBER, '--body', f"{REASON}\n\nThis usually means the diff exceeds the policy limit or a forbidden path was touched."])
 
           webhook = os.environ.get('SLACK_WEBHOOK_URL')
           if webhook:
@@ -207,38 +232,51 @@ jobs:
         id: outcome
         if: always()
         env:
-          VALID: ${{ steps.parse.outputs.valid }}
-          STALE: ${{ steps.parse.outputs.stale }}
-          VERDICT: ${{ steps.parse.outputs.verdict }}
+          HAS_VERDICT: ${{ steps.rc.outputs.has_verdict }}
+          STALE: ${{ steps.rc.outputs.stale }}
+          VERDICT: ${{ steps.rc.outputs.verdict }}
+          CI: ${{ steps.rc.outputs.ci_status }}
           GATE: ${{ steps.policy.outputs.result }}
         run: |
-          if [ "$VALID" != "true" ] && [ "$STALE" != "true" ]; then
-            echo "result=parse_failed" >> "$GITHUB_OUTPUT"
-          elif [ "$STALE" = "true" ]; then
+          if [ "$STALE" = "true" ]; then
             echo "result=stale" >> "$GITHUB_OUTPUT"
-          elif [ "$VERDICT" = "approve" ] && [ "$GATE" = "pass" ]; then
-            echo "result=approved" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_VERDICT" != "true" ]; then
+            echo "result=waiting" >> "$GITHUB_OUTPUT"
           elif [ "$VERDICT" = "request_changes" ]; then
             echo "result=request_changes" >> "$GITHUB_OUTPUT"
           elif [ "$VERDICT" = "needs_human" ]; then
             echo "result=needs_human" >> "$GITHUB_OUTPUT"
-          elif [ "$VERDICT" = "approve" ] && [ "$GATE" != "pass" ]; then
+          elif [ "$VERDICT" = "approve" ] && [ "$CI" = "pending" ]; then
+            echo "result=waiting" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "approve" ] && [ "$CI" = "success" ] && [ "$GATE" = "pass" ]; then
+            echo "result=approved" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "approve" ] && [ "$CI" = "success" ] && [ "$GATE" != "pass" ]; then
             echo "result=policy_failed" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "approve" ] && [ "$CI" = "failure" ]; then
+            echo "result=ci_failed" >> "$GITHUB_OUTPUT"
           else
-            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "result=waiting" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post devin-review status
-        if: always()
+        if: always() && steps.rc.outputs.head_sha != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SHA: ${{ steps.parse.outputs.sha || steps.parse.outputs.pr_head_sha }}
+          SHA: ${{ steps.rc.outputs.head_sha }}
           OUTCOME: ${{ steps.outcome.outputs.result }}
-          COMMENT_URL: ${{ github.event.comment.html_url }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
             const sha = process.env.SHA;
             const outcome = process.env.OUTCOME;
+
+            // While waiting for the verdict or CI to settle, leave the pending
+            // status in place rather than flapping it to failure.
+            if (outcome === 'waiting') {
+              console.log('Still waiting for verdict/CI; leaving status unchanged');
+              return;
+            }
+
             let state = 'failure';
             let description = 'Devin review did not complete successfully.';
 
@@ -259,19 +297,14 @@ jobs:
                 state = 'failure';
                 description = 'Reviewer approved but policy gate failed.';
                 break;
+              case 'ci_failed':
+                state = 'failure';
+                description = 'Reviewer approved but CI failed.';
+                break;
               case 'stale':
                 state = 'success';
                 description = 'Review comment is for an older commit; ignored.';
                 break;
-              case 'parse_failed':
-                state = 'failure';
-                description = 'Could not parse review verdict comment.';
-                break;
-            }
-
-            if (!sha) {
-              console.log('No commit sha available; skipping status update');
-              return;
             }
 
             await github.rest.repos.createCommitStatus({
@@ -281,5 +314,5 @@ jobs:
               context: 'devin-review',
               state,
               description,
-              target_url: process.env.COMMENT_URL,
+              target_url: process.env.TARGET_URL,
             });

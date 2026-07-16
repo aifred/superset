@@ -53,17 +53,6 @@ def _check_state(c: dict[str, Any]) -> bool:
     return False
 
 
-def _is_pending(c: dict[str, Any]) -> bool:
-    """Return True if a check has not reached a terminal state yet.
-
-    A CheckRun is pending until its ``status`` is ``COMPLETED``; a legacy
-    StatusContext is pending while its ``state`` is ``PENDING``.
-    """
-    if (status := c.get("status")) is not None:
-        return status != "COMPLETED"
-    return c.get("state") == "PENDING"
-
-
 def gh(fields: str) -> dict[str, Any]:
     repo, pr = os.environ["GITHUB_REPOSITORY"], os.environ["PR_NUMBER"]
     out = subprocess.run(
@@ -207,17 +196,6 @@ def main() -> int:
         return fail("no required or available status checks to verify")
     for c in to_check:
         name = c.get("name") or c.get("context") or "unknown"
-        # A still-running *branch-protection required* check is not a failure:
-        # GitHub auto-merge holds the PR until every required check completes,
-        # so it cannot merge before that check goes green. Pending checks that
-        # are not known-required get no such guarantee, so they still block the
-        # gate (this covers the GraphQL fallback path where isRequired is
-        # unavailable and repos with no required checks configured).
-        if _is_pending(c):
-            if c.get("isRequired"):
-                print(f"required check '{name}' is still running; auto-merge will hold")
-                continue
-            return fail(f"check '{name}' has not completed")
         if not _check_state(c):
             return fail(f"check '{name}' did not pass")
 
