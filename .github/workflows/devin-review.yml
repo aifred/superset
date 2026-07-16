@@ -11,8 +11,25 @@ concurrency:
 permissions: {}
 
 jobs:
+  config:
+    runs-on: ubuntu-24.04
+    outputs:
+      has-policy-bot: ${{ steps.check.outputs.has_policy_bot }}
+    steps:
+      - id: check
+        env:
+          POLICY_BOT_APP_ID: ${{ secrets.POLICY_BOT_APP_ID }}
+          POLICY_BOT_APP_PRIVATE_KEY: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$POLICY_BOT_APP_ID" ] && [ -n "$POLICY_BOT_APP_PRIVATE_KEY" ]; then
+            echo "has_policy_bot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_policy_bot=false" >> "$GITHUB_OUTPUT"
+          fi
+
   review:
     runs-on: ubuntu-24.04
+    needs: config
     if: >
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -43,7 +60,7 @@ jobs:
 
       - name: Generate policy-bot token
         id: bot-token
-        if: secrets.POLICY_BOT_APP_ID != '' && secrets.POLICY_BOT_APP_PRIVATE_KEY != ''
+        if: needs.config.outputs.has-policy-bot == 'true'
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ secrets.POLICY_BOT_APP_ID }}
@@ -306,7 +323,7 @@ jobs:
 
   merge:
     runs-on: ubuntu-24.04
-    needs: review
+    needs: [review, config]
     if: needs.review.outputs.gate == 'pass'
     permissions:
       contents: write
@@ -314,7 +331,7 @@ jobs:
     steps:
       - name: Generate policy-bot token
         id: policy-bot-token
-        if: secrets.POLICY_BOT_APP_ID != '' && secrets.POLICY_BOT_APP_PRIVATE_KEY != ''
+        if: needs.config.outputs.has-policy-bot == 'true'
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ secrets.POLICY_BOT_APP_ID }}
@@ -325,7 +342,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Approve and enable auto-merge
-        if: steps.policy-bot-token.outputs.token != ''
+        if: needs.config.outputs.has-policy-bot == 'true' && steps.policy-bot-token.outputs.token != ''
         env:
           GH_TOKEN: ${{ steps.policy-bot-token.outputs.token }}
         run: |

@@ -35,7 +35,7 @@ FORBIDDEN = [
     "scripts/",
 ]
 LOCK_RE = re.compile(
-    r".*\.(lock|lock\.json)$|package-lock\.json$|yarn\.lock$|Pipfile\.lock$|uv\.lock$"
+    r"(^|/)(package-lock\.json|yarn\.lock|Pipfile\.lock|uv\.lock)$|.*\.lock$"
 )
 
 
@@ -83,10 +83,21 @@ def main() -> int:
     required = [c for c in checks if c.get("isRequired")]
     to_check = required if required else checks
     for c in to_check:
-        if c.get("status") != "COMPLETED":
-            return fail(f"check '{c.get('name')}' not completed")
-        if c.get("conclusion") not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-            return fail(f"check '{c.get('name')}' conclusion={c.get('conclusion')}")
+        name = c.get("name") or c.get("context") or "unknown"
+        status = c.get("status")
+        conclusion = c.get("conclusion")
+        state = c.get("state")
+
+        if status == "COMPLETED":
+            if conclusion not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+                return fail(f"check '{name}' conclusion={conclusion}")
+        elif state:
+            if state == "PENDING":
+                return fail(f"check '{name}' not completed")
+            if state not in ("SUCCESS", "EXPECTED"):
+                return fail(f"check '{name}' state={state}")
+        else:
+            return fail(f"check '{name}' has no status or state")
 
     if int(pr.get("additions", 0)) + int(pr.get("deletions", 0)) >= 300:
         return fail("diff >= 300 lines")
