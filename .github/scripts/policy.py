@@ -51,6 +51,87 @@ def gh(fields: str) -> dict[str, Any]:
     return json.loads(out.stdout)
 
 
+def required_status_checks(pr_node_id: str) -> list[dict[str, Any]]:
+    """Fetch checks with isRequired populated via GitHub GraphQL.
+
+    `gh pr view --json statusCheckRollup` does not include `isRequired`,
+    which would make the gate fall back to evaluating every check.
+    """
+    query = """
+    query($prId: ID!) {
+      node(id: $prId) {
+        ... on PullRequest {
+          commits(last: 1) {
+            nodes {
+              commit {
+                statusCheckRollup {
+                  contexts(first: 100) {
+                    nodes {
+                      ... on CheckRun {
+                        name
+                        status
+                        conclusion
+                        isRequired(pullRequestId: $prId)
+                      }
+                      ... on StatusContext {
+                        context
+                        state
+                        isRequired(pullRequestId: $prId)
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    proc = subprocess.run(
+        ["gh", "api", "graphql", "-f", "query=" + query, "-f", f"prId={pr_node_id}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN") or ""},
+    )
+    if proc.returncode != 0:
+        print(f"GraphQL warning: {proc.stderr.strip()}", file=sys.stderr)
+        return []
+
+    data = json.loads(proc.stdout)
+    if "errors" in data:
+        print(f"GraphQL errors: {data['errors']}", file=sys.stderr)
+        return []
+    contexts = (
+        data.get("data", {})
+        .get("node", {})
+        .get("commits", {})
+        .get("nodes", [{}])[0]
+        .get("commit", {})
+        .get("statusCheckRollup", {})
+        .get("contexts", {})
+        .get("nodes", [])
+    )
+
+    # Normalize StatusContext shape into the same keys CheckRun uses.
+    normalized: list[dict[str, Any]] = []
+    for c in contexts:
+        name = c.get("name") or c.get("context") or "unknown"
+        if name == "devin-review":
+            continue
+        normalized.append(
+            {
+                "name": name,
+                "status": c.get("status"),
+                "conclusion": c.get("conclusion"),
+                "state": c.get("state"),
+                "isRequired": c.get("isRequired"),
+            }
+        )
+    return normalized
+
+
 def fail(msg: str) -> int:
     print(f"FAIL: {msg}")
     return 1
@@ -69,7 +150,7 @@ def main() -> int:
     if not verdict.get("tests_adequate"):
         return fail("tests_adequate is false")
 
-    pr = gh("headRefName,title,statusCheckRollup,additions,deletions,files")
+    pr = gh("headRefName,title,additions,deletions,files")
     text = f"{pr.get('title', '')} {pr.get('headRefName', '')}"
     if not re.search(r"\b[A-Z][A-Z0-9]*-\d+\b", text):
         return fail("no Jira issue key in PR title or branch")
@@ -79,11 +160,13 @@ def main() -> int:
         if any(path.startswith(p) for p in FORBIDDEN) or LOCK_RE.match(path):
             return fail(f"forbidden path touched: {path}")
 
-    checks = pr.get("statusCheckRollup") or []
-    # Ignore the workflow's own devin-review status check; it is posted after the gate.
-    checks = [
-        c for c in checks if (c.get("name") or c.get("context")) != "devin-review"
-    ]
+    if pr_node_id := os.environ.get("PR_NODE_ID"):
+        checks = required_status_checks(pr_node_id)
+    else:
+        checks = pr.get("statusCheckRollup") or []
+        checks = [
+            c for c in checks if (c.get("name") or c.get("context")) != "devin-review"
+        ]
     required = [c for c in checks if c.get("isRequired")]
     to_check = required if required else checks
     for c in to_check:
