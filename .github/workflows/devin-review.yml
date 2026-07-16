@@ -41,8 +41,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Generate policy-bot token
+        id: bot-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.POLICY_BOT_APP_ID }}
+          private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-pull-requests: write
+
       - name: Ensure auto-ship labels exist
         env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           ensure_label() {
@@ -109,6 +121,7 @@ jobs:
       - name: Request changes
         if: steps.verdict.outputs.verdict == 'request_changes'
         env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -126,6 +139,7 @@ jobs:
       - name: Escalate to human review
         if: failure() || steps.verdict.outputs.verdict == 'needs_human'
         env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -187,6 +201,7 @@ jobs:
         if: always()
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
