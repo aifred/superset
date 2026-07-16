@@ -132,7 +132,7 @@ def poll_session() -> dict[str, Any]:
                 f"Fix session {session_id} is waiting for user input/approval"
             )
 
-        if status in {"exit", "error", "suspended"}:
+        if status in {"exit", "error"}:
             with open("fix_session.json", "w", encoding="utf-8") as f:
                 json.dump(data, f)
             if status == "exit":
@@ -142,6 +142,9 @@ def poll_session() -> dict[str, Any]:
                 print("Fix session completed; output written to fix_output.json")
                 return data
             raise SystemExit(f"Fix session ended with status: {status}")
+
+        if status == "suspended":
+            print(f"Fix session {session_id} suspended; continuing to poll")
 
         time.sleep(POLL_INTERVAL_SECONDS)
 

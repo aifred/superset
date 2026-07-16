@@ -1,0 +1,281 @@
+name: Devin auto-ship review complete
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: devin-review-complete-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  complete:
+    runs-on: ubuntu-24.04
+    if: >
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '### Devin review verdict')
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      issues: write
+    outputs:
+      result: ${{ steps.outcome.outputs.result }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      COMMENT_BODY: ${{ github.event.comment.body }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+      DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
+      JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || secrets.JIRA_BASE_URL }}
+      JIRA_USER_EMAIL: ${{ vars.JIRA_USER_EMAIL || secrets.JIRA_USER_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Parse verdict comment
+        id: parse
+        run: python3 .github/scripts/review_complete.py parse
+
+      - name: Run deterministic policy gate
+        id: policy
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.stale != 'true' && steps.parse.outputs.verdict == 'approve'
+        env:
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NODE_ID: ${{ steps.parse.outputs.node_id }}
+          DEVIN_VERDICT: verdict.json
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if python3 .github/scripts/policy.py; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for policy-bot app
+        id: bot_config
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.stale != 'true'
+        env:
+          POLICY_BOT_APP_ID: ${{ secrets.POLICY_BOT_APP_ID }}
+          POLICY_BOT_APP_PRIVATE_KEY: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$POLICY_BOT_APP_ID" ] && [ -n "$POLICY_BOT_APP_PRIVATE_KEY" ]; then
+            echo "has_policy_bot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_policy_bot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate policy-bot approval token
+        id: bot-token
+        if: steps.bot_config.outputs.has_policy_bot == 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.POLICY_BOT_APP_ID }}
+          private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Approve and enable auto-merge
+        id: approve
+        if: >
+          steps.parse.outputs.valid == 'true' &&
+          steps.parse.outputs.stale != 'true' &&
+          steps.parse.outputs.verdict == 'approve' &&
+          steps.policy.outputs.result == 'pass'
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --approve --body "Auto-ship policy gate passed — approved by auto-ship."
+          gh pr merge "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --auto --squash
+
+      - name: Request changes
+        if: >
+          steps.parse.outputs.valid == 'true' &&
+          steps.parse.outputs.stale != 'true' &&
+          steps.parse.outputs.verdict == 'request_changes'
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested" --remove-label "automerge:eligible" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body "Devin reviewer requested changes; fix session has been triggered."
+
+      - name: Escalate to human review
+        if: >
+          steps.parse.outputs.valid == 'true' &&
+          steps.parse.outputs.stale != 'true' &&
+          steps.parse.outputs.verdict == 'needs_human'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_KEY: ${{ steps.parse.outputs.issue_key }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, urllib.request
+
+          REPO = os.environ['REPO']
+          PR_NUMBER = os.environ['PR_NUMBER']
+          ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          REASON = "Auto-ship review stopped: Reviewer escalated this PR to human review."
+
+          def gh(args):
+              subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
+
+          gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested', '--remove-label', 'automerge:eligible'])
+          gh(['comment', PR_NUMBER, '--body', REASON])
+
+          webhook = os.environ.get('SLACK_WEBHOOK_URL')
+          if webhook:
+              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              req = urllib.request.Request(
+                  webhook,
+                  data=body.encode(),
+                  headers={'Content-Type': 'application/json'},
+              )
+              try:
+                  urllib.request.urlopen(req, timeout=30)
+              except Exception as exc:
+                  print(f"Slack notify failed: {exc}", file=sys.stderr)
+
+          if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              subprocess.run([
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+              ], check=False)
+          PY
+
+      - name: Escalate on policy failure
+        if: >
+          steps.parse.outputs.valid == 'true' &&
+          steps.parse.outputs.stale != 'true' &&
+          steps.parse.outputs.verdict == 'approve' &&
+          steps.policy.outputs.result == 'fail'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_KEY: ${{ steps.parse.outputs.issue_key }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, urllib.request
+
+          REPO = os.environ['REPO']
+          PR_NUMBER = os.environ['PR_NUMBER']
+          ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          REASON = "Auto-ship review stopped: Reviewer approved but the deterministic policy gate failed."
+
+          def gh(args):
+              subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
+
+          gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested', '--remove-label', 'automerge:eligible'])
+          gh(['comment', PR_NUMBER, '--body', f"{REASON}\n\nThis usually means CI is not green, the diff exceeds the policy limit, or a forbidden path was touched."])
+
+          webhook = os.environ.get('SLACK_WEBHOOK_URL')
+          if webhook:
+              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              req = urllib.request.Request(
+                  webhook,
+                  data=body.encode(),
+                  headers={'Content-Type': 'application/json'},
+              )
+              try:
+                  urllib.request.urlopen(req, timeout=30)
+              except Exception as exc:
+                  print(f"Slack notify failed: {exc}", file=sys.stderr)
+
+          if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              subprocess.run([
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+              ], check=False)
+          PY
+
+      - name: Determine outcome label
+        id: outcome
+        if: always()
+        env:
+          VALID: ${{ steps.parse.outputs.valid }}
+          STALE: ${{ steps.parse.outputs.stale }}
+          VERDICT: ${{ steps.parse.outputs.verdict }}
+          GATE: ${{ steps.policy.outputs.result }}
+        run: |
+          if [ "$VALID" != "true" ] && [ "$STALE" != "true" ]; then
+            echo "result=parse_failed" >> "$GITHUB_OUTPUT"
+          elif [ "$STALE" = "true" ]; then
+            echo "result=stale" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "approve" ] && [ "$GATE" = "pass" ]; then
+            echo "result=approved" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "request_changes" ]; then
+            echo "result=request_changes" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "needs_human" ]; then
+            echo "result=needs_human" >> "$GITHUB_OUTPUT"
+          elif [ "$VERDICT" = "approve" ] && [ "$GATE" != "pass" ]; then
+            echo "result=policy_failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post devin-review status
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SHA: ${{ steps.parse.outputs.sha || steps.parse.outputs.pr_head_sha }}
+          OUTCOME: ${{ steps.outcome.outputs.result }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+        with:
+          script: |
+            const sha = process.env.SHA;
+            const outcome = process.env.OUTCOME;
+            let state = 'failure';
+            let description = 'Devin review did not complete successfully.';
+
+            switch (outcome) {
+              case 'approved':
+                state = 'success';
+                description = 'Reviewer approved and policy gate passed.';
+                break;
+              case 'request_changes':
+                state = 'failure';
+                description = 'Reviewer requested changes.';
+                break;
+              case 'needs_human':
+                state = 'failure';
+                description = 'Reviewer escalated to human review.';
+                break;
+              case 'policy_failed':
+                state = 'failure';
+                description = 'Reviewer approved but policy gate failed.';
+                break;
+              case 'stale':
+                state = 'neutral';
+                description = 'Review comment is for an older commit; ignored.';
+                break;
+              case 'parse_failed':
+                state = 'failure';
+                description = 'Could not parse review verdict comment.';
+                break;
+            }
+
+            if (!sha) {
+              console.log('No commit sha available; skipping status update');
+              return;
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              context: 'devin-review',
+              state,
+              description,
+              target_url: process.env.COMMENT_URL,
+            });

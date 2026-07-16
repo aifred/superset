@@ -91,14 +91,14 @@ jobs:
 
       - name: Poll Devin fix session
         id: poll_fix
-        if: steps.issue_key.outputs.issue_key != ''
+        if: steps.issue_key.outputs.issue_key != '' && steps.start_fix.outcome == 'success'
         run: |
           python3 .github/scripts/fix_session.py poll
           STATUS=$(jq -r '.status // "unknown"' fix_session.json)
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
       - name: Report fix success
-        if: steps.poll_fix.outputs.status == 'exit'
+        if: steps.start_fix.outcome == 'success' && steps.poll_fix.outputs.status == 'exit'
         env:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
