@@ -1,0 +1,153 @@
+name: Devin auto-ship fix
+
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: devin-fix-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    if: github.event.label.name == 'devin-fix-requested'
+    environment: devin-fix
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+      DEVIN_API_TOKEN: ${{ secrets.DEVIN_FIX_KEY }}
+      MAX_ACU_LIMIT: 15
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || secrets.JIRA_BASE_URL }}
+      JIRA_USER_EMAIL: ${{ vars.JIRA_USER_EMAIL || secrets.JIRA_USER_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+    outputs:
+      issue_key: ${{ steps.issue_key.outputs.issue_key }}
+      status: ${{ steps.poll_fix.outputs.status }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Ensure auto-ship labels exist
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          ensure_label() {
+            name="$1"
+            color="$2"
+            description="$3"
+            gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2>/dev/null || true
+          }
+          ensure_label "automerge:eligible" "0e8a16" "Devin auto-ship: eligible to merge"
+          ensure_label "automerge:blocked" "b60205" "Devin auto-ship: policy gate blocked"
+          ensure_label "devin-fix-requested" "f9d0c4" "Devin auto-ship: fix requested"
+          ensure_label "needs-human" "d93f0b" "Devin auto-ship: escalated to human"
+
+      - name: Extract Jira issue key
+        id: issue_key
+        run: |
+          python3 - <<'PY' > issue_key.txt
+          import os, re, sys
+          title = os.environ.get('PR_TITLE', '')
+          ref = os.environ.get('PR_HEAD_REF', '')
+          m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', title)
+          if not m and ref:
+              m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
+          sys.stdout.write(m.group(1) if m else '')
+          PY
+          echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: No issue key; escalate
+        if: steps.issue_key.outputs.issue_key == ''
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s\n' "Auto-ship fix stopped: No Jira issue key found in the PR title or branch name." > comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Start Devin fix session
+        id: start_fix
+        if: steps.issue_key.outputs.issue_key != ''
+        env:
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: python3 .github/scripts/fix_session.py start
+
+      - name: Poll Devin fix session
+        id: poll_fix
+        if: steps.issue_key.outputs.issue_key != ''
+        run: |
+          python3 .github/scripts/fix_session.py poll
+          STATUS=$(jq -r '.status // "unknown"' fix_session.json)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Report fix success
+        if: steps.poll_fix.outputs.status == 'exit'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          SUMMARY=$(jq -r '.summary // "Fix session completed."' fix_output.json 2>/dev/null || echo "Fix session completed.")
+          printf '%s\n' "$SUMMARY" > comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "devin-fix-requested" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Report fix failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, urllib.request
+
+          REPO = os.environ['REPO']
+          PR_NUMBER = os.environ['PR_NUMBER']
+          ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          REASON = "Auto-ship fix session failed or was cancelled; escalating to human review."
+
+          def gh(args):
+              subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
+
+          with open('comment.md', 'w', encoding='utf-8') as f:
+              f.write(REASON)
+
+          gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested'])
+          gh(['comment', PR_NUMBER, '--body-file', 'comment.md'])
+
+          webhook = os.environ.get('SLACK_WEBHOOK_URL')
+          if webhook:
+              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              req = urllib.request.Request(
+                  webhook,
+                  data=body.encode(),
+                  headers={'Content-Type': 'application/json'},
+              )
+              try:
+                  urllib.request.urlopen(req, timeout=30)
+              except Exception as exc:
+                  print(f"Slack notify failed: {exc}", file=sys.stderr)
+
+          if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              subprocess.run([
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+              ], check=False)
+          PY

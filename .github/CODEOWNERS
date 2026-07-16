@@ -50,3 +50,19 @@
 /superset-frontend/src/packages/superset-core/ @michael-s-molina @villebro @geido @eschutho @rusackas @kgabryje
 /superset-frontend/src/core/ @michael-s-molina @villebro @geido @eschutho @rusackas @kgabryje
 /superset-frontend/src/extensions/ @michael-s-molina @villebro @geido @eschutho @rusackas @kgabryje
+
+# Auto-ship pilot: sensitive paths that require a human code owner
+# These are the CODEOWNERS-enforced gates referenced in AGENTS.md.
+
+/superset/security/ @aifred
+/superset/config.py @aifred
+/docker/ @aifred
+/requirements/ @aifred
+/RELEASING/ @aifred
+/helm/ @aifred
+/.github/workflows/ @aifred
+**/package-lock.json @aifred
+**/yarn.lock @aifred
+uv.lock @aifred
+Pipfile.lock @aifred
+*.lock @aifred

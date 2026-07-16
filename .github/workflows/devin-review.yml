@@ -1,0 +1,432 @@
+name: Devin auto-ship review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+concurrency:
+  group: devin-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  config:
+    runs-on: ubuntu-24.04
+    outputs:
+      has-policy-bot: ${{ steps.check.outputs.has_policy_bot }}
+    steps:
+      - id: check
+        env:
+          POLICY_BOT_APP_ID: ${{ secrets.POLICY_BOT_APP_ID }}
+          POLICY_BOT_APP_PRIVATE_KEY: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$POLICY_BOT_APP_ID" ] && [ -n "$POLICY_BOT_APP_PRIVATE_KEY" ]; then
+            echo "has_policy_bot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_policy_bot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  review:
+    runs-on: ubuntu-24.04
+    needs: config
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
+    outputs:
+      issue_key: ${{ steps.issue_key.outputs.issue_key }}
+      verdict: ${{ steps.verdict.outputs.verdict }}
+      gate: ${{ steps.gate.outputs.result }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+      DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL || secrets.JIRA_BASE_URL }}
+      JIRA_USER_EMAIL: ${{ vars.JIRA_USER_EMAIL || secrets.JIRA_USER_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Generate policy-bot token
+        id: bot-token
+        if: needs.config.outputs.has-policy-bot == 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.POLICY_BOT_APP_ID }}
+          private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Ensure auto-ship labels exist
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          ensure_label() {
+            name="$1"
+            color="$2"
+            description="$3"
+            gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2>/dev/null || true
+          }
+          ensure_label "automerge:eligible" "0e8a16" "Devin auto-ship: eligible to merge"
+          ensure_label "automerge:blocked" "b60205" "Devin auto-ship: policy gate blocked"
+          ensure_label "devin-fix-requested" "f9d0c4" "Devin auto-ship: fix requested"
+          ensure_label "needs-human" "d93f0b" "Devin auto-ship: escalated to human"
+
+      - name: Extract Jira issue key
+        id: issue_key
+        run: |
+          python3 - <<'PY' > issue_key.txt
+          import os, re, sys
+          title = os.environ.get('PR_TITLE', '')
+          ref = os.environ.get('PR_HEAD_REF', '')
+          m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', title)
+          if not m and ref:
+              m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
+          sys.stdout.write(m.group(1) if m else '')
+          PY
+          echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Start Devin reviewer session
+        id: start_session
+        if: steps.issue_key.outputs.issue_key != ''
+        env:
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: python3 .github/scripts/review_session.py start
+
+      - name: Poll Devin reviewer session
+        id: poll_session
+        if: steps.issue_key.outputs.issue_key != ''
+        run: python3 .github/scripts/review_session.py poll
+
+      - name: Set verdict output
+        id: verdict
+        if: steps.issue_key.outputs.issue_key != ''
+        run: |
+          VERDICT=$(jq -r '.verdict // "none"' verdict.json)
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          echo "verdict=$VERDICT"
+
+      - name: Run policy gate
+        id: gate
+        if: steps.verdict.outputs.verdict == 'approve'
+        env:
+          DEVIN_VERDICT: verdict.json
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Running deterministic policy gate..."
+          if python3 .github/scripts/policy.py; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Request changes
+        if: steps.verdict.outputs.verdict == 'request_changes'
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import json
+          with open('verdict.json', encoding='utf-8') as f:
+              v = json.load(f)
+          body = f"Devin reviewer requested changes.\n\nFindings:\n{v.get('findings', 'No findings provided.')}"
+          with open('comment.md', 'w', encoding='utf-8') as f:
+              f.write(body)
+          PY
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Escalate to human review
+        if: failure() || steps.verdict.outputs.verdict == 'needs_human'
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, urllib.request
+
+          REPO = os.environ['REPO']
+          PR_NUMBER = os.environ['PR_NUMBER']
+          ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          REASON = "Auto-ship review stopped: Reviewer escalated this PR to human review."
+
+          def gh(args):
+              subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
+
+          with open('comment.md', 'w', encoding='utf-8') as f:
+              f.write(REASON)
+
+          gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested'])
+          gh(['comment', PR_NUMBER, '--body-file', 'comment.md'])
+
+          webhook = os.environ.get('SLACK_WEBHOOK_URL')
+          if webhook:
+              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              req = urllib.request.Request(
+                  webhook,
+                  data=body.encode(),
+                  headers={'Content-Type': 'application/json'},
+              )
+              try:
+                  urllib.request.urlopen(req, timeout=30)
+              except Exception as exc:
+                  print(f"Slack notify failed: {exc}", file=sys.stderr)
+
+          if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              subprocess.run([
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+              ], check=False)
+          PY
+
+      - name: Escalate on policy failure
+        if: steps.gate.outputs.result == 'fail'
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys, urllib.request
+
+          REPO = os.environ['REPO']
+          PR_NUMBER = os.environ['PR_NUMBER']
+          ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          REASON = "Auto-ship review stopped: Reviewer approved but the deterministic policy gate failed."
+
+          def gh(args):
+              subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
+
+          with open('comment.md', 'w', encoding='utf-8') as f:
+              f.write(f"{REASON}\n\nThis usually means CI is not green or the diff exceeds the policy limit.")
+
+          gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested'])
+          gh(['comment', PR_NUMBER, '--body-file', 'comment.md'])
+
+          webhook = os.environ.get('SLACK_WEBHOOK_URL')
+          if webhook:
+              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              req = urllib.request.Request(
+                  webhook,
+                  data=body.encode(),
+                  headers={'Content-Type': 'application/json'},
+              )
+              try:
+                  urllib.request.urlopen(req, timeout=30)
+              except Exception as exc:
+                  print(f"Slack notify failed: {exc}", file=sys.stderr)
+
+          if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              subprocess.run([
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+              ], check=False)
+          PY
+
+      - name: Post devin-review status check
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
+          GATE: ${{ steps.gate.outputs.result }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        with:
+          script: |
+            const fs = require('fs');
+            let conclusion = 'failure';
+            let title = 'Devin auto-ship review';
+            let summary = 'Review did not complete successfully.';
+            const verdict = process.env.VERDICT;
+            const gate = process.env.GATE;
+            const issueKey = process.env.ISSUE_KEY;
+
+            if (!issueKey) {
+              conclusion = 'neutral';
+              summary = 'No Jira issue key; auto-ship review skipped.';
+            } else if (verdict === 'approve' && gate === 'pass') {
+              conclusion = 'success';
+              summary = 'Reviewer approved and policy gate passed.';
+            } else if (verdict === 'request_changes') {
+              conclusion = 'action_required';
+              summary = 'Reviewer requested changes.';
+            } else if (verdict === 'needs_human') {
+              summary = 'Reviewer escalated to human review.';
+            } else if (verdict === 'approve' && gate !== 'pass') {
+              summary = 'Reviewer approved but policy gate failed (CI not green or diff too large).';
+            } else {
+              summary = 'Review session failed, timed out, or produced no verdict.';
+            }
+
+            const output = { title, summary };
+            if (fs.existsSync('verdict.json')) {
+              const text = fs.readFileSync('verdict.json', 'utf8');
+              output.text = text.length > 65000 ? text.slice(0, 65000) + '\n... truncated' : text;
+            }
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'devin-review',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion,
+              output,
+            });
+
+      - name: Notify assignee on code-owned path touches
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys, urllib.request
+
+          def to_regex(pattern: str) -> re.Pattern | None:
+              pattern = pattern.split('#')[0].strip()
+              if not pattern:
+                  return None
+              leading = pattern.startswith('/')
+              if leading:
+                  pattern = pattern[1:]
+              is_dir = pattern.endswith('/')
+              if is_dir:
+                  pattern = pattern[:-1]
+              if pattern.startswith('**/'):
+                  pattern = pattern[3:]
+                  leading_any = True
+              else:
+                  leading_any = not leading
+
+              placeholder = '\x00'
+              parts = []
+              i = 0
+              while i < len(pattern):
+                  if pattern[i:i + 2] == '**':
+                      parts.append(placeholder)
+                      i += 2
+                  elif pattern[i] == '*':
+                      parts.append('[^/]*')
+                      i += 1
+                  elif pattern[i] == '?':
+                      parts.append('.')
+                      i += 1
+                  else:
+                      parts.append(re.escape(pattern[i]))
+                      i += 1
+              translated = ''.join(parts).replace(placeholder, '.*')
+              prefix = '^(?:.*/)?' if leading_any else '^'
+              suffix = '(?:/|$).*$' if is_dir else '$'
+              return re.compile(prefix + translated + suffix)
+
+          def main():
+              repo = os.environ['REPO']
+              pr = os.environ['PR_NUMBER']
+              token = os.environ.get('GH_TOKEN')
+              env = {'GH_TOKEN': token} if token else None
+              import subprocess
+              result = subprocess.run(
+                  ['gh', 'pr', 'view', pr, '--repo', repo, '--json', 'files,title'],
+                  env=env,
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  print(f"Could not fetch PR files: {result.stderr}", file=sys.stderr)
+                  return
+              pr_data = json.loads(result.stdout)
+              changed = [f.get('path') for f in pr_data.get('files', []) if f.get('path')]
+
+              patterns = []
+              with open('.github/CODEOWNERS', encoding='utf-8') as f:
+                  for line in f:
+                      line = line.split('#')[0].strip()
+                      if not line:
+                          continue
+                      tokens = line.split()
+                      pattern = tokens[0]
+                      if pattern:
+                          regex = to_regex(pattern)
+                          if regex:
+                              patterns.append((pattern, regex))
+
+              owned = [path for path in changed if any(r.match(path) for _, r in patterns)]
+              if not owned:
+                  return
+
+              message = (
+                  "Auto-ship PR touches code-owned paths and requires a human code-owner review:\n"
+                  + "\n".join(f"- {p}" for p in owned[:20])
+              )
+              webhook = os.environ.get('SLACK_WEBHOOK_URL')
+              if webhook:
+                  body = json.dumps({'text': message})
+                  req = urllib.request.Request(
+                      webhook,
+                      data=body.encode(),
+                      headers={'Content-Type': 'application/json'},
+                  )
+                  try:
+                      urllib.request.urlopen(req, timeout=30)
+                  except Exception as exc:
+                      print(f"Slack notify failed: {exc}", file=sys.stderr)
+              else:
+                  print(message)
+
+          main()
+          PY
+
+  merge:
+    runs-on: ubuntu-24.04
+    needs: [review, config]
+    if: needs.review.outputs.gate == 'pass'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Generate policy-bot token
+        id: policy-bot-token
+        if: needs.config.outputs.has-policy-bot == 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+        with:
+          app-id: ${{ secrets.POLICY_BOT_APP_ID }}
+          private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Approve and enable auto-merge
+        if: needs.config.outputs.has-policy-bot != 'true' || steps.policy-bot-token.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.policy-bot-token.outputs.token || secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --approve --body "Auto-ship policy gate passed — approved by auto-ship."
+          gh pr merge ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --auto --squash
