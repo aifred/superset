@@ -39,6 +39,20 @@ LOCK_RE = re.compile(
 )
 
 
+def _check_state(c: dict[str, Any]) -> bool:
+    """Return True if a single status context/check is considered passing."""
+    status = c.get("status")
+    conclusion = c.get("conclusion")
+
+    if status == "COMPLETED":
+        return conclusion in ("SUCCESS", "NEUTRAL", "SKIPPED")
+    if state := c.get("state"):
+        if state == "PENDING":
+            return False
+        return state in ("SUCCESS", "EXPECTED")
+    return False
+
+
 def gh(fields: str) -> dict[str, Any]:
     repo, pr = os.environ["GITHUB_REPOSITORY"], os.environ["PR_NUMBER"]
     out = subprocess.run(
@@ -51,11 +65,12 @@ def gh(fields: str) -> dict[str, Any]:
     return json.loads(out.stdout)
 
 
-def required_status_checks(pr_node_id: str) -> list[dict[str, Any]]:
+def required_status_checks(pr_node_id: str) -> list[dict[str, Any]] | None:
     """Fetch checks with isRequired populated via GitHub GraphQL.
 
-    `gh pr view --json statusCheckRollup` does not include `isRequired`,
-    which would make the gate fall back to evaluating every check.
+    Returns None when the GraphQL call fails, so callers can fall back to the
+    REST-shaped statusCheckRollup from `gh pr view`. Returns an empty list
+    only when the call succeeded but no contexts were returned.
     """
     query = """
     query($prId: ID!) {
@@ -97,12 +112,12 @@ def required_status_checks(pr_node_id: str) -> list[dict[str, Any]]:
     )
     if proc.returncode != 0:
         print(f"GraphQL warning: {proc.stderr.strip()}", file=sys.stderr)
-        return []
+        return None
 
     data = json.loads(proc.stdout)
     if "errors" in data:
         print(f"GraphQL errors: {data['errors']}", file=sys.stderr)
-        return []
+        return None
     contexts = (
         data.get("data", {})
         .get("node", {})
@@ -150,41 +165,39 @@ def main() -> int:
     if not verdict.get("tests_adequate"):
         return fail("tests_adequate is false")
 
-    pr = gh("headRefName,title,additions,deletions,files")
+    pr = gh("headRefName,title,additions,deletions,files,statusCheckRollup,id")
     text = f"{pr.get('title', '')} {pr.get('headRefName', '')}"
     if not re.search(r"\b[A-Z][A-Z0-9]*-\d+\b", text):
         return fail("no Jira issue key in PR title or branch")
 
     for f in pr.get("files", []):
         path = f.get("path", "")
-        if any(path.startswith(p) for p in FORBIDDEN) or LOCK_RE.match(path):
+        if any(path.startswith(p) for p in FORBIDDEN) or LOCK_RE.search(path):
             return fail(f"forbidden path touched: {path}")
 
-    if pr_node_id := os.environ.get("PR_NODE_ID"):
-        checks = required_status_checks(pr_node_id)
+    checks: list[dict[str, Any]]
+    if pr_node_id := os.environ.get("PR_NODE_ID") or pr.get("id"):
+        ghql_checks = required_status_checks(pr_node_id)
+        checks = ghql_checks if ghql_checks is not None else []
     else:
-        checks = pr.get("statusCheckRollup") or []
+        checks = []
+
+    if not checks:
+        raw = pr.get("statusCheckRollup") or []
+        if isinstance(raw, dict):
+            raw = raw.get("nodes") or []
         checks = [
-            c for c in checks if (c.get("name") or c.get("context")) != "devin-review"
+            c for c in raw if (c.get("name") or c.get("context")) != "devin-review"
         ]
+
     required = [c for c in checks if c.get("isRequired")]
     to_check = required if required else checks
+    if not to_check:
+        return fail("no required or available status checks to verify")
     for c in to_check:
         name = c.get("name") or c.get("context") or "unknown"
-        status = c.get("status")
-        conclusion = c.get("conclusion")
-        state = c.get("state")
-
-        if status == "COMPLETED":
-            if conclusion not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-                return fail(f"check '{name}' conclusion={conclusion}")
-        elif state:
-            if state == "PENDING":
-                return fail(f"check '{name}' not completed")
-            if state not in ("SUCCESS", "EXPECTED"):
-                return fail(f"check '{name}' state={state}")
-        else:
-            return fail(f"check '{name}' has no status or state")
+        if not _check_state(c):
+            return fail(f"check '{name}' did not pass")
 
     if int(pr.get("additions", 0)) + int(pr.get("deletions", 0)) >= 300:
         return fail("diff >= 300 lines")

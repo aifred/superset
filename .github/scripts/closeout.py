@@ -226,7 +226,8 @@ def transition_to_done(issue_key: str) -> None:
     jira_request(
         "POST", f"/issue/{issue_key}/transitions", {"transition": {"id": chosen["id"]}}
     )
-    print(f"Transitioned {issue_key} to {chosen['to']['name']}")
+    to_name = chosen.get("to", {}).get("name") or "unknown"
+    print(f"Transitioned {issue_key} to {to_name}")
 
 
 def update_jira_fields(
@@ -314,10 +315,10 @@ def main() -> int:
 
     if not author:
         print(
-            f"No author session found for {issue_key}; aborting closeout",
+            f"No author session found for {issue_key}; skipping closeout",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return 0
 
     terminate_session(author)
 

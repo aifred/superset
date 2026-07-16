@@ -76,6 +76,28 @@ Return your evaluation as structured_output with these fields:
 A PR is eligible for auto-merge only when verdict == approve, confidence >= 0.8, risk_tier == low, the diff is < 300 lines, and CI is green. CODEOWNERS enforces the forbidden paths, not this check, but you should still note any forbidden-path changes in findings.
 """
 
+_VERDICT_BLOCK = '{{"sha":"{head_sha}","run_id":"{run_id}","verdict":"<verdict>","findings":"<findings>","risk_tier":"<risk_tier>","tests_adequate":<true|false>,"confidence":<confidence>}}'  # noqa: E501
+
+POST_INSTRUCTIONS = """
+When you have finalized your verdict:
+1. Call `provide_structured_output` with the verdict JSON.
+2. Create a file named `comment.md` with exactly this content structure,
+   replacing the `<...>` placeholders with your actual verdict values:
+
+### Devin review verdict
+
+```json
+{verdict_json}
+```
+
+<your concise findings summary>
+
+3. Run this exact command to post the verdict back to GitHub:
+gh pr comment {pr_number} --repo {repo} --body-file comment.md
+
+The `GH_TOKEN` environment variable is already set in your session for `gh`.
+"""
+
 
 def env_var(name: str) -> str:
     value = os.environ.get(name)
@@ -125,11 +147,37 @@ def fetch_diff() -> str:
     return result.stdout[:50000]
 
 
+def _session_secrets() -> list[dict[str, Any]]:
+    """Expose PR and GitHub token to the reviewer session so it can post a verdict comment."""
+    token = os.environ.get("GH_TOKEN", "")
+    repo = os.environ.get("REPO", "")
+    pr_number = os.environ.get("PR_NUMBER", "")
+    head_sha = os.environ.get("PR_HEAD_SHA", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+
+    secrets = []
+    if token:
+        secrets.append({"key": "GH_TOKEN", "value": token, "sensitive": True})
+    for key, value in (
+        ("REPO", repo),
+        ("PR_NUMBER", pr_number),
+        ("HEAD_SHA", head_sha),
+        ("RUN_ID", run_id),
+    ):
+        if value:
+            secrets.append({"key": key, "value": value, "sensitive": False})
+    return secrets
+
+
 def start_review() -> str:
     issue_key = env_var("ISSUE_KEY")
     pr_title = os.environ.get("PR_TITLE", "")
     pr_body = os.environ.get("PR_BODY", "")
     pr_url = os.environ.get("PR_URL", "")
+    repo = os.environ.get("REPO", "")
+    pr_number = os.environ.get("PR_NUMBER", "")
+    head_sha = os.environ.get("PR_HEAD_SHA", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
     diff = fetch_diff()
 
     prompt = REVIEWER_PROMPT.format(
@@ -140,8 +188,18 @@ def start_review() -> str:
         diff=diff,
     )
 
-    payload = {
-        "tags": [issue_key, "review"],
+    if head_sha and run_id and pr_number and repo:
+        verdict_json = _VERDICT_BLOCK.format(head_sha=head_sha, run_id=run_id)
+        prompt += POST_INSTRUCTIONS.format(
+            pr_number=pr_number,
+            repo=repo,
+            verdict_json=verdict_json,
+        )
+
+    payload: dict[str, Any] = {
+        "tags": [issue_key, "review", f"run-{run_id}"]
+        if run_id
+        else [issue_key, "review"],
         "max_acu_limit": int(os.environ.get("MAX_ACU_LIMIT", 10)),
         "prompt": prompt,
         "bypass_approval": True,
@@ -149,6 +207,9 @@ def start_review() -> str:
         "structured_output_schema": VERDICT_SCHEMA,
         "repos": [env_var("REPO")],
     }
+
+    if session_secrets := _session_secrets():
+        payload["session_secrets"] = session_secrets
 
     response = api_request("POST", "/sessions", payload)
     session_id = response.get("session_id") or response.get("devin_id")
@@ -191,12 +252,15 @@ def poll_session() -> dict[str, Any]:
                 f"Reviewer session {session_id} is waiting for user input/approval"
             )
 
-        if status in {"exit", "error", "suspended"}:
+        if status in {"exit", "error"}:
             if status == "exit":
                 save_verdict(data)
                 print("Session completed; verdict written to verdict.json")
                 return data
             raise SystemExit(f"Reviewer session ended with status: {status}")
+
+        if status == "suspended":
+            print("Reviewer session suspended; continuing to poll")
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
