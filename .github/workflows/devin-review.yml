@@ -37,12 +37,29 @@ jobs:
       DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Ensure auto-ship labels exist
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          ensure_label() {
+            name="$1"
+            color="$2"
+            description="$3"
+            gh label create "$name" --repo "$REPO" --color "$color" --description "$description" 2>/dev/null || true
+          }
+          ensure_label "automerge:eligible" "0e8a16" "Devin auto-ship: eligible to merge"
+          ensure_label "automerge:blocked" "b60205" "Devin auto-ship: policy gate blocked"
+          ensure_label "devin-fix-requested" "f9d0c4" "Devin auto-ship: fix requested"
+          ensure_label "needs-human" "d93f0b" "Devin auto-ship: escalated to human"
 
       - name: Extract Jira issue key
         id: issue_key
         run: |
-          python3 - <<'PY'
+          python3 - <<'PY' > issue_key.txt
           import os, re, sys
           title = os.environ.get('PR_TITLE', '')
           ref = os.environ.get('PR_HEAD_REF', '')
@@ -50,7 +67,7 @@ jobs:
           if not m and ref:
               m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
           sys.stdout.write(m.group(1) if m else '')
-          PY > issue_key.txt
+          PY
           echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Start Devin reviewer session
@@ -103,7 +120,7 @@ jobs:
           with open('comment.md', 'w', encoding='utf-8') as f:
               f.write(body)
           PY
-          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested"
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested" || true
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
 
       - name: Escalate to human review
@@ -114,19 +131,20 @@ jobs:
         env:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
         run: |
-          if [ -z "${{ steps.issue_key.outputs.issue_key }}" ]; then
+          if [ -z "$ISSUE_KEY" ]; then
             REASON="No Jira issue key found in the PR title or branch name."
           else
             REASON="Reviewer escalated this PR to human review."
           fi
           printf '%s\n' "Auto-ship review stopped: $REASON" > comment.md
-          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human"
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human" || true
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
 
       - name: Post devin-review status check
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           VERDICT: ${{ steps.verdict.outputs.verdict }}
           GATE: ${{ steps.gate.outputs.result }}
@@ -288,10 +306,15 @@ jobs:
     steps:
       - name: Generate policy-bot token
         id: policy-bot-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ secrets.POLICY_BOT_APP_ID }}
           private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permissions:
+            contents: write
+            pull_requests: write
 
       - name: Approve and enable auto-merge
         env:

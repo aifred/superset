@@ -32,12 +32,14 @@ jobs:
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Extract Jira issue key
         id: issue_key
         run: |
-          python3 - <<'PY'
+          python3 - <<'PY' > issue_key.txt
           import os, re, sys
           title = os.environ.get('PR_TITLE', '')
           ref = os.environ.get('PR_HEAD_REF', '')
@@ -45,7 +47,7 @@ jobs:
           if not m and ref:
               m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
           sys.stdout.write(m.group(1) if m else '')
-          PY > issue_key.txt
+          PY
           echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Run close-out
