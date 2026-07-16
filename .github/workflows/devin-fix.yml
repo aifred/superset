@@ -30,6 +30,10 @@ jobs:
       DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
       DEVIN_API_TOKEN: ${{ secrets.DEVIN_FIX_KEY }}
       MAX_ACU_LIMIT: 15
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
     outputs:
       issue_key: ${{ steps.issue_key.outputs.issue_key }}
       status: ${{ steps.poll_fix.outputs.status }}
@@ -107,9 +111,43 @@ jobs:
       - name: Report fix failure
         if: failure()
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
         run: |
-          printf '%s\n' "Auto-ship fix session failed or was cancelled. Escalating to human review." > comment.md
-          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human" || true
-          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.request
+
+          REPO = os.environ['REPO']
+          PR_NUMBER = os.environ['PR_NUMBER']
+          ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          REASON = "Auto-ship fix session failed or was cancelled; escalating to human review."
+
+          def gh(args):
+              subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
+
+          with open('comment.md', 'w', encoding='utf-8') as f:
+              f.write(REASON)
+
+          gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested'])
+          gh(['comment', PR_NUMBER, '--body-file', 'comment.md'])
+
+          webhook = os.environ.get('SLACK_WEBHOOK_URL')
+          if webhook:
+              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              req = urllib.request.Request(
+                  webhook,
+                  data=body.encode(),
+                  headers={'Content-Type': 'application/json'},
+              )
+              try:
+                  urllib.request.urlopen(req, timeout=30)
+              except Exception as exc:
+                  print(f"Slack notify failed: {exc}", file=sys.stderr)
+
+          if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              subprocess.run([
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+              ], check=False)
+          PY

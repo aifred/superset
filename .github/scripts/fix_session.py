@@ -93,6 +93,7 @@ def start_fix() -> str:
         "tags": [issue_key, "fix"],
         "max_acu_limit": int(os.environ.get("MAX_ACU_LIMIT", 15)),
         "prompt": prompt,
+        "bypass_approval": True,
         "repos": [env_var("REPO")],
     }
 
@@ -120,9 +121,16 @@ def poll_session() -> dict[str, Any]:
     while time.time() < deadline:
         data = api_request("GET", f"/sessions/{session_id}")
         status = data.get("status", "")
+        status_detail = data.get("status_detail", "")
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] fix session {session_id} status: {status}"
+            f"[{datetime.now(timezone.utc).isoformat()}] fix session {session_id} "
+            f"status: {status} detail: {status_detail}"
         )
+
+        if status_detail in {"waiting_for_user", "waiting_for_approval"}:
+            raise SystemExit(
+                f"Fix session {session_id} is waiting for user input/approval"
+            )
 
         if status in {"exit", "error", "suspended"}:
             with open("fix_session.json", "w", encoding="utf-8") as f:

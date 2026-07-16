@@ -144,6 +144,7 @@ def start_review() -> str:
         "tags": [issue_key, "review"],
         "max_acu_limit": int(os.environ.get("MAX_ACU_LIMIT", 10)),
         "prompt": prompt,
+        "bypass_approval": True,
         "structured_output_required": True,
         "structured_output_schema": VERDICT_SCHEMA,
         "repos": [env_var("REPO")],
@@ -179,9 +180,16 @@ def poll_session() -> dict[str, Any]:
     while time.time() < deadline:
         data = api_request("GET", f"/sessions/{session_id}")
         status = data.get("status", "")
+        status_detail = data.get("status_detail", "")
         print(
-            f"[{datetime.now(timezone.utc).isoformat()}] session {session_id} status: {status}"
+            f"[{datetime.now(timezone.utc).isoformat()}] session {session_id} "
+            f"status: {status} detail: {status_detail}"
         )
+
+        if status_detail in {"waiting_for_user", "waiting_for_approval"}:
+            raise SystemExit(
+                f"Reviewer session {session_id} is waiting for user input/approval"
+            )
 
         if status in {"exit", "error", "suspended"}:
             if status == "exit":
