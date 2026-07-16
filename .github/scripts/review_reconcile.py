@@ -34,7 +34,15 @@ import json
 import os
 import subprocess
 import sys
+import time
 from typing import Any
+
+# GitHub's status-check rollup can briefly lag the workflow_run event that
+# triggers us, so a just-completed required check may still read as pending.
+# Re-query a bounded number of times to let it settle before we decide to wait
+# (this is not a poll for *other* checks — it only lets the rollup catch up).
+_ROLLUP_SETTLE_RETRIES = 3
+_ROLLUP_SETTLE_DELAY_SECONDS = 10
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -138,6 +146,22 @@ def _latest_verdict_comment(repo: str, pr_number: str) -> dict[str, Any] | None:
     return None
 
 
+def _fetch_pr(repo: str, pr_number: str) -> Any:
+    """Fetch the PR fields needed to reconcile the gate."""
+    return _gh_json(
+        [
+            "gh",
+            "pr",
+            "view",
+            pr_number,
+            "--repo",
+            repo,
+            "--json",
+            "id,headRefOid,headRefName,title,statusCheckRollup",
+        ]
+    )
+
+
 def _ci_status(node_id: str, pr: dict[str, Any]) -> str:
     """Return 'success', 'failure', or 'pending' for the required checks.
 
@@ -189,18 +213,7 @@ def main() -> int:
         _emit(pr_number, has_verdict, verdict_value, stale, issue_key, ci_status)
         return 0
 
-    pr = _gh_json(
-        [
-            "gh",
-            "pr",
-            "view",
-            pr_number,
-            "--repo",
-            repo,
-            "--json",
-            "id,headRefOid,headRefName,title,statusCheckRollup",
-        ]
-    )
+    pr = _fetch_pr(repo, pr_number)
     if not isinstance(pr, dict):
         print(f"Could not load PR #{pr_number}; skipping.")
         _emit(pr_number, has_verdict, verdict_value, stale, issue_key, ci_status)
@@ -233,6 +246,19 @@ def main() -> int:
             print(f"Failed to parse verdict comment: {exc}")
 
     ci_status = _ci_status(node_id, pr)
+
+    # On a workflow_run event a required check has just completed, so a pending
+    # reading is most likely rollup lag: re-query briefly to let it settle
+    # rather than exiting quietly and waiting for an unrelated later event.
+    if ci_status == "pending" and os.environ.get("EVENT_NAME") == "workflow_run":
+        for _ in range(_ROLLUP_SETTLE_RETRIES):
+            time.sleep(_ROLLUP_SETTLE_DELAY_SECONDS)
+            refreshed = _fetch_pr(repo, pr_number)
+            if isinstance(refreshed, dict):
+                pr = refreshed
+            ci_status = _ci_status(node_id, pr)
+            if ci_status != "pending":
+                break
 
     _emit(
         pr_number,

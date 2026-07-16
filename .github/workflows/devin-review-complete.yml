@@ -7,8 +7,12 @@ on:
     workflows: ["*"]
     types: [completed]
 
+# Serialize per PR: auto-ship PRs are same-repo, so a workflow_run event
+# carries pull_requests[0].number, matching issue_comment's PR number and
+# placing both event types in one group. (Fork runs, which lack that field,
+# would share an empty-suffixed group — harmless over-serialization.)
 concurrency:
-  group: devin-review-complete-${{ github.event.issue.number || github.event.workflow_run.head_branch }}
+  group: devin-review-complete-${{ github.event.issue.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: false
 
 permissions: {}
