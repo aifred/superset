@@ -117,7 +117,7 @@ jobs:
           ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
         run: |
           python3 - <<'PY'
-          import json, os, subprocess, urllib.request
+          import json, os, subprocess, sys, urllib.request
 
           REPO = os.environ['REPO']
           PR_NUMBER = os.environ['PR_NUMBER']

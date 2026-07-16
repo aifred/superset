@@ -80,6 +80,10 @@ def main() -> int:
             return fail(f"forbidden path touched: {path}")
 
     checks = pr.get("statusCheckRollup") or []
+    # Ignore the workflow's own devin-review status check; it is posted after the gate.
+    checks = [
+        c for c in checks if (c.get("name") or c.get("context")) != "devin-review"
+    ]
     required = [c for c in checks if c.get("isRequired")]
     to_check = required if required else checks
     for c in to_check:

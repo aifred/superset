@@ -60,7 +60,8 @@ def api_request(
     )
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
+            raw = resp.read().decode()
+            return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode()
         raise SystemExit(
@@ -111,7 +112,17 @@ def transition_issue(
 
     payload: dict[str, Any] = {"transition": {"id": transition_id}}
     if comment:
-        payload["update"] = {"comment": [{"add": {"body": comment}}]}
+        adf_body = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": comment}],
+                }
+            ],
+        }
+        payload["update"] = {"comment": [{"add": {"body": adf_body}}]}
 
     api_request(
         base_url, auth, "POST", f"/rest/api/3/issue/{issue_key}/transitions", payload

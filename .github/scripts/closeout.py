@@ -160,7 +160,8 @@ def jira_request(method: str, path: str, payload: dict[str, Any] | None = None) 
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
+            raw = resp.read().decode()
+            return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode()
         raise SystemExit(
