@@ -219,6 +219,7 @@ jobs:
           PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
           ISSUE_KEY: ${{ steps.rc.outputs.issue_key }}
           PR_URL: https://github.com/${{ github.repository }}/pull/${{ steps.rc.outputs.pr_number }}
+          POLICY_REASON: ${{ steps.policy.outputs.policy_reason }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess, sys, urllib.request
@@ -226,7 +227,10 @@ jobs:
           REPO = os.environ['REPO']
           PR_NUMBER = os.environ['PR_NUMBER']
           ISSUE_KEY = os.environ.get('ISSUE_KEY', '')
+          POLICY_REASON = os.environ.get('POLICY_REASON', '').strip()
           REASON = "Auto-ship review stopped: Reviewer approved but the deterministic policy gate failed."
+          COMMENT = f"{REASON}\n\nPolicy gate detail: {POLICY_REASON}" if POLICY_REASON else f"{REASON}\n\nNo further reason was captured from the policy gate."
+          SLACK_REASON = f"{REASON} ({POLICY_REASON})" if POLICY_REASON else REASON
 
           def gh(args):
               subprocess.run(['gh', 'pr'] + args + ['--repo', REPO], check=False)
@@ -243,11 +247,11 @@ jobs:
               raise SystemExit(0)
 
           gh(['edit', PR_NUMBER, '--add-label', 'needs-human', '--remove-label', 'devin-fix-requested', '--remove-label', 'automerge:eligible'])
-          gh(['comment', PR_NUMBER, '--body', f"{REASON}\n\nThis usually means the diff exceeds the policy limit or a forbidden path was touched."])
+          gh(['comment', PR_NUMBER, '--body', COMMENT])
 
           webhook = os.environ.get('SLACK_WEBHOOK_URL')
           if webhook:
-              body = json.dumps({'text': f"{REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
+              body = json.dumps({'text': f"{SLACK_REASON}\n<{os.environ.get('PR_URL', '')}|PR #{PR_NUMBER}>"})
               req = urllib.request.Request(
                   webhook,
                   data=body.encode(),
@@ -259,8 +263,9 @@ jobs:
                   print(f"Slack notify failed: {exc}", file=sys.stderr)
 
           if ISSUE_KEY and os.environ.get('JIRA_BASE_URL'):
+              jira_reason = f"{REASON} - {POLICY_REASON}" if POLICY_REASON else REASON
               subprocess.run([
-                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', REASON,
+                  'python3', '.github/scripts/jira_transition.py', ISSUE_KEY, 'Backlog', jira_reason,
               ], check=False)
           PY
 
@@ -364,10 +369,12 @@ jobs:
           SHA: ${{ steps.rc.outputs.head_sha }}
           OUTCOME: ${{ steps.outcome.outputs.result }}
           TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          POLICY_REASON: ${{ steps.policy.outputs.policy_reason || '' }}
         with:
           script: |
             const sha = process.env.SHA;
             const outcome = process.env.OUTCOME;
+            const policyReason = (process.env.POLICY_REASON || '').trim();
 
             // Leave the head's status untouched while waiting for the verdict
             // or CI to settle. 'stale' means the verdict was for an older
@@ -397,7 +404,8 @@ jobs:
                 break;
               case 'policy_failed':
                 state = 'failure';
-                description = 'Reviewer approved but policy gate failed.';
+                description = (policyReason ? `Policy failed: ${policyReason}` : 'Reviewer approved but policy gate failed.')
+                  .substring(0, 140);
                 break;
               case 'ci_failed':
                 state = 'failure';
