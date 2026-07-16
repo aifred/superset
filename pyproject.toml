@@ -404,6 +404,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "superset/utils/json.py" = ["TID251"]
 "docker/*" = ["I"]  # Docker config files have non-standard imports that vary by environment
 "superset/db_engine_specs/lib.py" = ["E501"]  # Database config file with long description strings
+".github/scripts/*.py" = ["TID251", "S310", "S603", "S607", "E501", "C901"]  # Standalone workflow helpers; use urllib/subprocess and contain long LLM prompts
 
 [tool.ruff.lint.isort]
 case-sensitive = false

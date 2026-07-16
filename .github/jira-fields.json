@@ -1,0 +1,10 @@
+{
+  "_comment": "Populate this file with your Jira Cloud customfield IDs (e.g. customfield_12345). Use GET /rest/api/3/field or set JIRA_FIELD_<NAME> env vars in repository secrets/variables.",
+  "acus_consumed": null,
+  "cycle_time": null,
+  "review_verdict": null,
+  "review_confidence": null,
+  "reviewer_session_id": null,
+  "author_session_id": null,
+  "merged_by": null
+}

@@ -305,3 +305,49 @@ pre-commit run eslint            # Frontend linting
 ---
 
 **LLM Note**: This codebase is actively modernizing toward full TypeScript and type safety. Always run `pre-commit run` to validate changes. Follow the ongoing refactors section to avoid deprecated patterns.
+
+## Auto-ship Pipeline (pilot scope)
+
+This section applies only to PRs created by the Devin auto-ship flow for `devin-eligible` Jira tickets.
+
+### Author PR conventions
+
+1. Read the Jira ticket. If acceptance criteria are absent or ambiguous, state the interpretation in the PR description; do not guess silently.
+2. Find the smallest change that satisfies the acceptance criteria.
+3. Branch name must start with the issue key: `<ISSUE-KEY>` or `<ISSUE-KEY>-<slug>`. The Jira Development panel, Rule #2, and close-out all depend on it.
+4. PR title must be `[<ISSUE-KEY>] <imperative summary>`.
+5. Implement and add or update tests covering the behavior.
+6. Run the test suite + pre-commit on the changed files before pushing. Fix what breaks.
+7. PR description must contain: Jira link, what changed and why, how it was tested, and any assumptions.
+8. Keep the diff scoped to the ticket: no drive-by refactors, no formatting churn, and a total diff of fewer than 300 lines if possible.
+9. Do not merge, approve, or alter branch protection settings.
+10. Done = PR opened on the default branch, CI triggered, and the description complete.
+
+### Forbidden paths for auto-ship
+
+The following surfaces require a human code owner and must not be auto-merged. If a fix requires touching them, stop and explain in the PR description; do not silently proceed.
+
+- `superset/migrations/`
+- `superset/security/`
+- `superset/config.py`
+- `.github/workflows/`
+- `helm/`
+- `docker/`
+- `requirements/`
+- lockfiles (`**/package-lock.json`, `**/yarn.lock`, `uv.lock`, `Pipfile.lock`)
+- `RELEASING/`
+
+### Reviewer checklist (3c)
+
+If you are reviewing an auto-ship PR, read the diff with no knowledge of the author's reasoning. Evaluate the PR against the following and produce `structured_output` with `verdict`, `findings`, `risk_tier`, `tests_adequate`, and `confidence`:
+
+- Branch name starts with the issue key.
+- PR title follows the `[<ISSUE-KEY>] <imperative summary>` format.
+- Acceptance criteria are met.
+- Tests exist and pass.
+- Pre-commit / linters pass.
+- Diff is scoped to the ticket (no drive-by refactors or formatting churn) and is fewer than 300 lines.
+- No forbidden paths are touched.
+- Scope is not expanded.
+
+A PR is eligible for auto-merge only when `verdict == approve`, `confidence >= 0.8`, `risk_tier == low`, CI is green, and `diff < 300 lines`. Path gating is enforced by GitHub CODEOWNERS, not by the policy check. If a requested change would touch a forbidden path, escalate to `needs-human` instead of fixing silently.

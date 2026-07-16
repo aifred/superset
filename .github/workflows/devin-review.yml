@@ -1,0 +1,301 @@
+name: Devin auto-ship review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+concurrency:
+  group: devin-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    if: >
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
+    outputs:
+      issue_key: ${{ steps.issue_key.outputs.issue_key }}
+      verdict: ${{ steps.verdict.outputs.verdict }}
+      gate: ${{ steps.gate.outputs.result }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+      DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Jira issue key
+        id: issue_key
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          title = os.environ.get('PR_TITLE', '')
+          ref = os.environ.get('PR_HEAD_REF', '')
+          m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', title)
+          if not m and ref:
+              m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
+          sys.stdout.write(m.group(1) if m else '')
+          PY > issue_key.txt
+          echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Start Devin reviewer session
+        id: start_session
+        if: steps.issue_key.outputs.issue_key != ''
+        env:
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: python3 .github/scripts/review_session.py start
+
+      - name: Poll Devin reviewer session
+        id: poll_session
+        if: steps.issue_key.outputs.issue_key != ''
+        run: python3 .github/scripts/review_session.py poll
+
+      - name: Set verdict output
+        id: verdict
+        if: steps.issue_key.outputs.issue_key != ''
+        run: |
+          VERDICT=$(jq -r '.verdict // "none"' verdict.json)
+          echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+          echo "verdict=$VERDICT"
+
+      - name: Run policy gate
+        id: gate
+        if: steps.verdict.outputs.verdict == 'approve'
+        env:
+          DEVIN_VERDICT: verdict.json
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Running deterministic policy gate..."
+          if python3 .github/scripts/policy.py; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Request changes
+        if: steps.verdict.outputs.verdict == 'request_changes'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import json
+          with open('verdict.json', encoding='utf-8') as f:
+              v = json.load(f)
+          body = f"Devin reviewer requested changes.\n\nFindings:\n{v.get('findings', 'No findings provided.')}"
+          with open('comment.md', 'w', encoding='utf-8') as f:
+              f.write(body)
+          PY
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Escalate to human review
+        if: >
+          failure() ||
+          steps.issue_key.outputs.issue_key == '' ||
+          steps.verdict.outputs.verdict == 'needs_human'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -z "${{ steps.issue_key.outputs.issue_key }}" ]; then
+            REASON="No Jira issue key found in the PR title or branch name."
+          else
+            REASON="Reviewer escalated this PR to human review."
+          fi
+          printf '%s\n' "Auto-ship review stopped: $REASON" > comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Post devin-review status check
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
+          GATE: ${{ steps.gate.outputs.result }}
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        with:
+          script: |
+            const fs = require('fs');
+            let conclusion = 'failure';
+            let title = 'Devin auto-ship review';
+            let summary = 'Review did not complete successfully.';
+            const verdict = process.env.VERDICT;
+            const gate = process.env.GATE;
+            const issueKey = process.env.ISSUE_KEY;
+
+            if (!issueKey) {
+              summary = 'No Jira issue key found in PR title or branch.';
+            } else if (verdict === 'approve' && gate === 'pass') {
+              conclusion = 'success';
+              summary = 'Reviewer approved and policy gate passed.';
+            } else if (verdict === 'request_changes') {
+              conclusion = 'action_required';
+              summary = 'Reviewer requested changes.';
+            } else if (verdict === 'needs_human') {
+              summary = 'Reviewer escalated to human review.';
+            } else if (verdict === 'approve' && gate !== 'pass') {
+              summary = 'Reviewer approved but policy gate failed (CI not green or diff too large).';
+            } else {
+              summary = 'Review session failed, timed out, or produced no verdict.';
+            }
+
+            const output = { title, summary };
+            if (fs.existsSync('verdict.json')) {
+              const text = fs.readFileSync('verdict.json', 'utf8');
+              output.text = text.length > 65000 ? text.slice(0, 65000) + '\n... truncated' : text;
+            }
+
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'devin-review',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion,
+              output,
+            });
+
+      - name: Notify assignee on code-owned path touches
+        if: always()
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys, urllib.request
+
+          def to_regex(pattern: str) -> re.Pattern | None:
+              pattern = pattern.split('#')[0].strip()
+              if not pattern:
+                  return None
+              leading = pattern.startswith('/')
+              if leading:
+                  pattern = pattern[1:]
+              is_dir = pattern.endswith('/')
+              if is_dir:
+                  pattern = pattern[:-1]
+              if pattern.startswith('**/'):
+                  pattern = pattern[3:]
+                  leading_any = True
+              else:
+                  leading_any = not leading
+
+              placeholder = '\x00'
+              parts = []
+              i = 0
+              while i < len(pattern):
+                  if pattern[i:i + 2] == '**':
+                      parts.append(placeholder)
+                      i += 2
+                  elif pattern[i] == '*':
+                      parts.append('[^/]*')
+                      i += 1
+                  elif pattern[i] == '?':
+                      parts.append('.')
+                      i += 1
+                  else:
+                      parts.append(re.escape(pattern[i]))
+                      i += 1
+              translated = ''.join(parts).replace(placeholder, '.*')
+              prefix = '^(?:.*/)?' if leading_any else '^'
+              suffix = '(?:/|$).*$' if is_dir else '$'
+              return re.compile(prefix + translated + suffix)
+
+          def main():
+              repo = os.environ['REPO']
+              pr = os.environ['PR_NUMBER']
+              token = os.environ.get('GH_TOKEN')
+              env = {'GH_TOKEN': token} if token else None
+              import subprocess
+              result = subprocess.run(
+                  ['gh', 'pr', 'view', pr, '--repo', repo, '--json', 'files,title'],
+                  env=env,
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  print(f"Could not fetch PR files: {result.stderr}", file=sys.stderr)
+                  return
+              pr_data = json.loads(result.stdout)
+              changed = [f.get('path') for f in pr_data.get('files', []) if f.get('path')]
+
+              patterns = []
+              with open('.github/CODEOWNERS', encoding='utf-8') as f:
+                  for line in f:
+                      line = line.split('#')[0].strip()
+                      if not line:
+                          continue
+                      tokens = line.split()
+                      pattern = tokens[0]
+                      if pattern:
+                          regex = to_regex(pattern)
+                          if regex:
+                              patterns.append((pattern, regex))
+
+              owned = [path for path in changed if any(r.match(path) for _, r in patterns)]
+              if not owned:
+                  return
+
+              message = (
+                  "Auto-ship PR touches code-owned paths and requires a human code-owner review:\n"
+                  + "\n".join(f"- {p}" for p in owned[:20])
+              )
+              webhook = os.environ.get('SLACK_WEBHOOK_URL')
+              if webhook:
+                  body = json.dumps({'text': message})
+                  req = urllib.request.Request(
+                      webhook,
+                      data=body.encode(),
+                      headers={'Content-Type': 'application/json'},
+                  )
+                  try:
+                      urllib.request.urlopen(req, timeout=30)
+                  except Exception as exc:
+                      print(f"Slack notify failed: {exc}", file=sys.stderr)
+              else:
+                  print(message)
+
+          main()
+          PY
+
+  merge:
+    runs-on: ubuntu-24.04
+    needs: review
+    if: needs.review.outputs.gate == 'pass'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Generate policy-bot token
+        id: policy-bot-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.POLICY_BOT_APP_ID }}
+          private-key: ${{ secrets.POLICY_BOT_APP_PRIVATE_KEY }}
+
+      - name: Approve and enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.policy-bot-token.outputs.token }}
+        run: |
+          gh pr review ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --approve --body "Auto-ship policy gate passed — approved by policy-bot."
+          gh pr merge ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --auto --squash

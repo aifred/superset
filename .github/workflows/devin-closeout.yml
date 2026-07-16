@@ -1,0 +1,55 @@
+name: Devin auto-ship close-out
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: devin-closeout-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  closeout:
+    runs-on: ubuntu-24.04
+    if: github.event.pull_request.merged == true
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      MERGED_AT: ${{ github.event.pull_request.merged_at }}
+      MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+      DEVIN_API_TOKEN: ${{ secrets.DEVIN_REVIEWER_KEY }}
+      JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+      JIRA_USER_EMAIL: ${{ vars.JIRA_USER_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Jira issue key
+        id: issue_key
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          title = os.environ.get('PR_TITLE', '')
+          ref = os.environ.get('PR_HEAD_REF', '')
+          m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', title)
+          if not m and ref:
+              m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
+          sys.stdout.write(m.group(1) if m else '')
+          PY > issue_key.txt
+          echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Run close-out
+        if: steps.issue_key.outputs.issue_key != ''
+        env:
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: python3 .github/scripts/closeout.py

@@ -1,0 +1,98 @@
+name: Devin auto-ship fix
+
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: devin-fix-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    if: github.event.label.name == 'devin-fix-requested'
+    environment: devin-fix
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BODY: ${{ github.event.pull_request.body }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      DEVIN_ORG_ID: ${{ vars.DEVIN_ORG_ID }}
+      DEVIN_API_TOKEN: ${{ secrets.DEVIN_FIX_KEY }}
+      MAX_ACU_LIMIT: 15
+    outputs:
+      issue_key: ${{ steps.issue_key.outputs.issue_key }}
+      status: ${{ steps.poll_fix.outputs.status }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract Jira issue key
+        id: issue_key
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          title = os.environ.get('PR_TITLE', '')
+          ref = os.environ.get('PR_HEAD_REF', '')
+          m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', title)
+          if not m and ref:
+              m = re.search(r'\b([A-Z][A-Z0-9]*-\d+)\b', ref)
+          sys.stdout.write(m.group(1) if m else '')
+          PY > issue_key.txt
+          echo "issue_key=$(tr -d '\n' < issue_key.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: No issue key; escalate
+        if: steps.issue_key.outputs.issue_key == ''
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s\n' "Auto-ship fix stopped: No Jira issue key found in the PR title or branch name." > comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Start Devin fix session
+        id: start_fix
+        if: steps.issue_key.outputs.issue_key != ''
+        env:
+          ISSUE_KEY: ${{ steps.issue_key.outputs.issue_key }}
+        run: python3 .github/scripts/fix_session.py start
+
+      - name: Poll Devin fix session
+        id: poll_fix
+        if: steps.issue_key.outputs.issue_key != ''
+        run: |
+          python3 .github/scripts/fix_session.py poll
+          STATUS=$(jq -r '.status // "unknown"' fix_session.json)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Report fix success
+        if: steps.poll_fix.outputs.status == 'exit'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          SUMMARY=$(jq -r '.summary // "Fix session completed."' fix_output.json 2>/dev/null || echo "Fix session completed.")
+          printf '%s\n' "$SUMMARY" > comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "devin-fix-requested"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md
+
+      - name: Report fix failure
+        if: failure()
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s\n' "Auto-ship fix session failed or was cancelled. Escalating to human review." > comment.md
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-human"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file comment.md

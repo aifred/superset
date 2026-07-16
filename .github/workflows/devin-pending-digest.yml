@@ -1,0 +1,84 @@
+name: Devin auto-ship pending digest
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: devin-pending-digest
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  digest:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and send pending digest
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import urllib.request
+
+          def list_prs(label: str):
+              result = subprocess.run(
+                  ['gh', 'pr', 'list', '--repo', os.environ['REPO'], '--state', 'open',
+                   '--label', label, '--json', 'number,title,url,createdAt'],
+                  capture_output=True,
+                  text=True,
+              )
+              if result.returncode != 0:
+                  print(f"Failed to list PRs for {label}: {result.stderr}", file=sys.stderr)
+                  return []
+              return json.loads(result.stdout)
+
+          def main():
+              fix_prs = list_prs('devin-fix-requested')
+              human_prs = list_prs('needs-human')
+
+              if not fix_prs and not human_prs:
+                  print('No pending auto-ship items.')
+                  return
+
+              lines = ['*Auto-ship pending digest*']
+              if fix_prs:
+                  lines.append('\n*Pending fix approvals (`devin-fix-requested`):*')
+                  for pr in fix_prs:
+                      lines.append(f"• <{pr['url']}|#{pr['number']} {pr['title']}> (opened {pr['createdAt'][:10]})")
+              if human_prs:
+                  lines.append('\n*Human escalations (`needs-human`):*')
+                  for pr in human_prs:
+                      lines.append(f"• <{pr['url']}|#{pr['number']} {pr['title']}> (opened {pr['createdAt'][:10]})")
+
+              body = '\n'.join(lines)
+              webhook = os.environ.get('SLACK_WEBHOOK_URL')
+              if webhook:
+                  req = urllib.request.Request(
+                      webhook,
+                      data=json.dumps({'text': body}).encode(),
+                      headers={'Content-Type': 'application/json'},
+                  )
+                  try:
+                      urllib.request.urlopen(req, timeout=30)
+                  except Exception as exc:
+                      print(f"Slack digest failed: {exc}", file=sys.stderr)
+                      raise SystemExit(1)
+              else:
+                  print(body)
+
+          main()
+          PY
