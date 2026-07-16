@@ -207,12 +207,17 @@ def main() -> int:
         return fail("no required or available status checks to verify")
     for c in to_check:
         name = c.get("name") or c.get("context") or "unknown"
-        # A still-running check is not a failure: GitHub auto-merge (gated on
-        # branch-protection required checks) holds the PR until every required
-        # check completes, so only a terminal non-success blocks the gate.
+        # A still-running *branch-protection required* check is not a failure:
+        # GitHub auto-merge holds the PR until every required check completes,
+        # so it cannot merge before that check goes green. Pending checks that
+        # are not known-required get no such guarantee, so they still block the
+        # gate (this covers the GraphQL fallback path where isRequired is
+        # unavailable and repos with no required checks configured).
         if _is_pending(c):
-            print(f"check '{name}' is still pending; leaving to auto-merge")
-            continue
+            if c.get("isRequired"):
+                print(f"required check '{name}' is still running; auto-merge will hold")
+                continue
+            return fail(f"check '{name}' has not completed")
         if not _check_state(c):
             return fail(f"check '{name}' did not pass")
 
