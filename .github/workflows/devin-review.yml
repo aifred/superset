@@ -43,6 +43,7 @@ jobs:
 
       - name: Generate policy-bot token
         id: bot-token
+        if: secrets.POLICY_BOT_APP_ID != '' && secrets.POLICY_BOT_APP_PRIVATE_KEY != ''
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ secrets.POLICY_BOT_APP_ID }}
@@ -54,7 +55,7 @@ jobs:
 
       - name: Ensure auto-ship labels exist
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           ensure_label() {
@@ -121,7 +122,7 @@ jobs:
       - name: Request changes
         if: steps.verdict.outputs.verdict == 'request_changes'
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -139,7 +140,7 @@ jobs:
       - name: Escalate to human review
         if: failure() || steps.verdict.outputs.verdict == 'needs_human'
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -201,7 +202,7 @@ jobs:
         if: always()
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          GH_TOKEN: ${{ steps.bot-token.outputs.token || secrets.GITHUB_TOKEN }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -313,6 +314,7 @@ jobs:
     steps:
       - name: Generate policy-bot token
         id: policy-bot-token
+        if: secrets.POLICY_BOT_APP_ID != '' && secrets.POLICY_BOT_APP_PRIVATE_KEY != ''
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
         with:
           app-id: ${{ secrets.POLICY_BOT_APP_ID }}
@@ -323,6 +325,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Approve and enable auto-merge
+        if: steps.policy-bot-token.outputs.token != ''
         env:
           GH_TOKEN: ${{ steps.policy-bot-token.outputs.token }}
         run: |
