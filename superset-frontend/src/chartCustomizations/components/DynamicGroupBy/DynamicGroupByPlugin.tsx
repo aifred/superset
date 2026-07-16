@@ -50,15 +50,19 @@ export default function PluginFilterDynamicGroupBy(
     inputRef,
   } = props;
   const { defaultValue } = formData;
+  const canSelectMultiple = formData.canSelectMultiple ?? true;
 
   const [value, setValue] = useState<string[]>(
-    ensureIsArray<string>(defaultValue ?? []),
+    ensureIsArray<string>(defaultValue ?? []).slice(
+      0,
+      canSelectMultiple ? undefined : 1,
+    ),
   );
 
   const handleChange = (values: SelectValue) => {
     const resultValue: string[] = ensureIsArray<string>(
       values as string | string[] | null | undefined,
-    );
+    ).slice(0, canSelectMultiple ? undefined : 1);
 
     const extraFormData: ExtraFormData = {
       custom_form_data: {
@@ -139,8 +143,8 @@ export default function PluginFilterDynamicGroupBy(
           <Select
             name={formData.nativeFilterId}
             allowClear
-            mode="multiple"
-            value={value}
+            mode={canSelectMultiple ? 'multiple' : undefined}
+            value={canSelectMultiple ? value : (value[0] ?? undefined)}
             placeholder={placeholderText}
             onChange={handleChange}
             onBlur={unsetFocusedFilter}
