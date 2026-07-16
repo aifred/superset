@@ -124,6 +124,13 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
         run: |
+          # A prior escalation to needs-human is a hard stop: don't let a later
+          # approve verdict silently re-approve and auto-merge a PR a human was
+          # asked to review. Auto-ship resumes once a human removes the label.
+          if gh pr view "$PR_NUMBER" --repo "$REPO" --json labels -q '.labels[].name' | grep -qx "needs-human"; then
+            echo "PR is labelled needs-human; refusing to auto-approve/merge."
+            exit 0
+          fi
           gh pr review "$PR_NUMBER" --repo "$REPO" --approve --body "Auto-ship policy gate passed — approved by auto-ship." || true
           gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash
 
