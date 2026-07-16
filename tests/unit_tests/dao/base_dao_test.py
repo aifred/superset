@@ -311,6 +311,47 @@ def test_list_page_size_below_one_is_floored():
     mock_query.limit.assert_called_once_with(1)
 
 
+def _list_with_page(page: int, page_size: int = 50) -> Mock:
+    """
+    Run ``BaseDAO.list`` with a mocked query chain and return the mock query so
+    the ``.offset()`` call (the effective SQL OFFSET) can be inspected.
+    """
+    mock_query = Mock()
+    mock_query.options.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.count.return_value = 0
+    mock_query.all.return_value = []
+
+    mock_data_model = Mock()
+    mock_data_model.session.query.return_value = mock_query
+
+    with (
+        patch("superset.daos.base.SQLAInterface", return_value=mock_data_model),
+        patch.object(TestDAO, "_apply_base_filter", side_effect=lambda q, **_: q),
+    ):
+        TestDAO.list(page=page, page_size=page_size)
+
+    return mock_query
+
+
+def test_list_negative_page_uses_offset_zero():
+    """A negative page is clamped so the SQL OFFSET is 0, like ``page=0``."""
+    negative = _list_with_page(-1, page_size=50)
+    negative.offset.assert_called_once_with(0)
+
+    zero = _list_with_page(0, page_size=50)
+    zero.offset.assert_called_once_with(0)
+
+
+def test_list_nonnegative_page_offset_unchanged():
+    """A non-negative page produces ``page * page_size`` as the SQL OFFSET."""
+    mock_query = _list_with_page(2, page_size=50)
+    mock_query.offset.assert_called_once_with(100)
+
+
 def test_like_operators_none_value_matches_no_rows() -> None:
     """A ``None`` value on a LIKE-family operator must match no rows.
 
