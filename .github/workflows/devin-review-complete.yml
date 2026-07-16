@@ -13,7 +13,6 @@ permissions: {}
 jobs:
   complete:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     if: >
       github.event.issue.pull_request &&
       contains(github.event.comment.body, '### Devin review verdict')
@@ -48,14 +47,6 @@ jobs:
       - name: Parse verdict comment
         id: parse
         run: python3 .github/scripts/review_complete.py parse
-
-      - name: Wait for other checks to complete
-        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.stale != 'true' && steps.parse.outputs.verdict == 'approve'
-        env:
-          PR_NUMBER: ${{ github.event.issue.number }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/wait_for_checks.py
 
       - name: Run deterministic policy gate
         id: policy

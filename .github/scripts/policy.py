@@ -53,6 +53,17 @@ def _check_state(c: dict[str, Any]) -> bool:
     return False
 
 
+def _is_pending(c: dict[str, Any]) -> bool:
+    """Return True if a check has not reached a terminal state yet.
+
+    A CheckRun is pending until its ``status`` is ``COMPLETED``; a legacy
+    StatusContext is pending while its ``state`` is ``PENDING``.
+    """
+    if (status := c.get("status")) is not None:
+        return status != "COMPLETED"
+    return c.get("state") == "PENDING"
+
+
 def gh(fields: str) -> dict[str, Any]:
     repo, pr = os.environ["GITHUB_REPOSITORY"], os.environ["PR_NUMBER"]
     out = subprocess.run(
@@ -196,6 +207,12 @@ def main() -> int:
         return fail("no required or available status checks to verify")
     for c in to_check:
         name = c.get("name") or c.get("context") or "unknown"
+        # A still-running check is not a failure: GitHub auto-merge (gated on
+        # branch-protection required checks) holds the PR until every required
+        # check completes, so only a terminal non-success blocks the gate.
+        if _is_pending(c):
+            print(f"check '{name}' is still pending; leaving to auto-merge")
+            continue
         if not _check_state(c):
             return fail(f"check '{name}' did not pass")
 
