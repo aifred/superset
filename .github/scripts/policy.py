@@ -149,6 +149,12 @@ def required_status_checks(pr_node_id: str) -> list[dict[str, Any]] | None:
 
 def fail(msg: str) -> int:
     print(f"FAIL: {msg}")
+    if gh_output := os.environ.get("GITHUB_OUTPUT"):
+        with open(gh_output, "a", encoding="utf-8") as f:
+            f.write(f"policy_reason={msg}\n")
+    if summary_file := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary_file, "a", encoding="utf-8") as f:
+            f.write(f"- Policy gate failed: {msg}\n")
     return 1
 
 
@@ -156,24 +162,27 @@ def main() -> int:
     verdict = json.load(
         open(os.environ.get("DEVIN_VERDICT") or sys.argv[1], encoding="utf-8")
     )
-    if verdict.get("verdict") != "approve":
-        return fail("verdict is not 'approve'")
-    if float(verdict.get("confidence", 0)) < 0.8:
-        return fail("confidence < 0.8")
-    if str(verdict.get("risk_tier", "")).lower() != "low":
-        return fail("risk_tier is not 'low'")
+    if (actual_verdict := verdict.get("verdict")) != "approve":
+        return fail(f"verdict is '{actual_verdict}' (must be 'approve')")
+    if (confidence := float(verdict.get("confidence", 0))) < 0.8:
+        return fail(f"confidence is {confidence} (must be >= 0.8)")
+    if (risk_tier := str(verdict.get("risk_tier", "")).lower()) != "low":
+        return fail(f"risk_tier is '{risk_tier}' (must be 'low')")
     if not verdict.get("tests_adequate"):
         return fail("tests_adequate is false")
 
     pr = gh("headRefName,title,additions,deletions,files,statusCheckRollup,id")
-    text = f"{pr.get('title', '')} {pr.get('headRefName', '')}"
-    if not re.search(r"\b[A-Z][A-Z0-9]*-\d+\b", text):
-        return fail("no Jira issue key in PR title or branch")
+    title = pr.get("title", "")
+    branch = pr.get("headRefName", "")
+    if not re.search(r"\b[A-Z][A-Z0-9]*-\d+\b", f"{title} {branch}"):
+        return fail(f"no Jira issue key in PR title ('{title}') or branch ('{branch}')")
 
     for f in pr.get("files", []):
         path = f.get("path", "")
-        if any(path.startswith(p) for p in FORBIDDEN) or LOCK_RE.search(path):
+        if any(path.startswith(p) for p in FORBIDDEN):
             return fail(f"forbidden path touched: {path}")
+        if LOCK_RE.search(path):
+            return fail(f"lock/dependency file touched: {path}")
 
     checks: list[dict[str, Any]]
     if pr_node_id := os.environ.get("PR_NODE_ID") or pr.get("id"):
@@ -197,10 +206,15 @@ def main() -> int:
     for c in to_check:
         name = c.get("name") or c.get("context") or "unknown"
         if not _check_state(c):
-            return fail(f"check '{name}' did not pass")
+            status = c.get("status") or c.get("state") or "unknown"
+            conclusion = c.get("conclusion") or "unknown"
+            return fail(
+                f"required check '{name}' did not pass (status={status}, conclusion={conclusion})"
+            )
 
-    if int(pr.get("additions", 0)) + int(pr.get("deletions", 0)) >= 300:
-        return fail("diff >= 300 lines")
+    diff_size = int(pr.get("additions", 0)) + int(pr.get("deletions", 0))
+    if diff_size >= 300:
+        return fail(f"diff is {diff_size} lines (must be < 300)")
 
     print("PASS: policy gate satisfied")
     return 0
