@@ -137,6 +137,12 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
         run: |
+          # Idempotent across the repeated triggers: if the fix has already been
+          # requested for this head, don't re-label/re-comment on each CI event.
+          if gh pr view "$PR_NUMBER" --repo "$REPO" --json labels -q '.labels[].name' | grep -qx "devin-fix-requested"; then
+            echo "Changes already requested; skipping duplicate notification."
+            exit 0
+          fi
           gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "devin-fix-requested" --remove-label "automerge:eligible" || true
           gh pr comment "$PR_NUMBER" --repo "$REPO" --body "Devin reviewer requested changes; fix session has been triggered."
 
