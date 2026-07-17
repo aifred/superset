@@ -30,6 +30,8 @@ from sqlalchemy_utils.types.encrypted.encrypted_type import (
     EncryptionDecryptionBaseEngine,
 )
 
+from superset.exceptions import SupersetException
+
 
 class EncryptedType(SqlaEncryptedType):
     cache_ok = True
@@ -156,9 +158,7 @@ class SQLAlchemyUtilsAdapter(  # pylint: disable=too-few-public-methods
                 kwargs["engine"] = engine_cls
             return EncryptedType(*args, lambda: app_config["SECRET_KEY"], **kwargs)
 
-        raise Exception(  # pylint: disable=broad-exception-raised
-            "Missing app_config kwarg"
-        )
+        raise ValueError("Missing app_config kwarg")
 
 
 class EncryptedFieldFactory:
@@ -180,9 +180,7 @@ class EncryptedFieldFactory:
             setattr(adapter, ENC_ADAPTER_TAG_ATTR_NAME, True)
             return adapter
 
-        raise Exception(  # pylint: disable=broad-exception-raised
-            "App not initialized yet. Please call init_app first"
-        )
+        raise SupersetException("App not initialized yet. Please call init_app first")
 
     @staticmethod
     def created_by_enc_field_factory(field: TypeDecorator) -> bool:
@@ -559,7 +557,7 @@ class SecretsMigrator:
                 stats.failed,
             )
             if stats.failed:
-                raise Exception(  # pylint: disable=broad-exception-raised
+                raise SupersetException(
                     f"Re-encryption failed for {stats.failed} value(s); "
                     "transaction rolled back"
                 )

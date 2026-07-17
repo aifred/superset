@@ -23,7 +23,9 @@ from sqlalchemy import String
 from sqlalchemy.engine import make_url
 from sqlalchemy_utils.types.encrypted.encrypted_type import AesEngine, AesGcmEngine
 
+from superset.exceptions import SupersetException
 from superset.utils.encrypt import (
+    EncryptedFieldFactory,
     EncryptedType,
     ReEncryptStats,
     resolve_encryption_engine,
@@ -155,6 +157,20 @@ def test_explicit_engine_kwarg_takes_precedence() -> None:
         engine=AesEngine,
     )
     assert isinstance(field.engine, AesEngine)
+
+
+def test_missing_app_config_raises_value_error() -> None:
+    """Creating a field without app_config is a caller error → ValueError."""
+    with pytest.raises(ValueError, match="Missing app_config kwarg"):
+        SQLAlchemyUtilsAdapter().create(None, String(128))
+
+
+def test_factory_create_before_init_app_raises_superset_exception() -> None:
+    """Using the factory before init_app is an invalid state → SupersetException."""
+    with pytest.raises(
+        SupersetException, match="App not initialized yet. Please call init_app first"
+    ):
+        EncryptedFieldFactory().create(String(128))
 
 
 def test_engine_migration_cbc_to_gcm_re_encrypts() -> None:
@@ -383,3 +399,38 @@ def test_engine_migration_unreadable_value_counts_as_failure() -> None:
 
     assert stats == ReEncryptStats(failed=1)
     assert conn.execute.call_count == 0
+
+
+def test_run_raises_superset_exception_on_failure() -> None:
+    """When any value cannot be re-encrypted, run() raises a SupersetException
+    so the all-or-nothing transaction is rolled back."""
+    migrator = _engine_migrator(AesGcmEngine)
+
+    conn = MagicMock()
+    begin_cm = MagicMock()
+    begin_cm.__enter__.return_value = conn
+    begin_cm.__exit__.return_value = False
+    migrator._db = MagicMock()  # noqa: SLF001
+    migrator._db.engine.begin.return_value = begin_cm  # noqa: SLF001
+
+    table = MagicMock()
+    pk_col = MagicMock()
+    pk_col.name = "id"
+    table.primary_key.columns = [pk_col]
+    columns = {"password": _encrypted_type(AesEngine)}
+    unreadable_row = _Row({"id": 1, "password": b"not-valid-ciphertext"})
+
+    with (
+        mock.patch.object(
+            migrator,
+            "discover_encrypted_fields",
+            return_value={"dbs": (table, columns)},
+        ),
+        mock.patch.object(
+            migrator,
+            "_select_columns_from_table",
+            return_value=[unreadable_row],
+        ),
+        pytest.raises(SupersetException, match="Re-encryption failed"),
+    ):
+        migrator.run()
