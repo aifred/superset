@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 import pytest
 from _pytest.fixtures import SubRequest
+from flask_appbuilder.security.sqla.models import Role, User
 from pytest_mock import MockerFixture
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -157,6 +158,47 @@ def full_api_access(mocker: MockerFixture) -> Union[Iterator[None], None]:
     mocker.patch.object(security_manager, "can_access_all_databases", return_value=True)
 
     return None
+
+
+def _create_user_with_role(session: Session, username: str, role_name: str) -> User:
+    """
+    Create (and persist) a user with the given role in the in-memory db.
+    """
+    # ensure the FAB auth tables exist in the in-memory engine
+    User.metadata.create_all(session.get_bind())
+
+    role = session.query(Role).filter_by(name=role_name).first()
+    if role is None:
+        role = Role(name=role_name)
+        session.add(role)
+        session.flush()
+
+    user = User(
+        first_name=username,
+        last_name=username,
+        username=username,
+        email=f"{username}@example.com",
+        roles=[role],
+    )
+    session.add(user)
+    session.flush()
+    return user
+
+
+@pytest.fixture
+def admin(session: Session) -> User:
+    """
+    A user with the ``Admin`` role for granular API access in unit tests.
+    """
+    return _create_user_with_role(session, "admin", "Admin")
+
+
+@pytest.fixture
+def gamma(session: Session) -> User:
+    """
+    A user with the ``Gamma`` role for granular API access in unit tests.
+    """
+    return _create_user_with_role(session, "gamma", "Gamma")
 
 
 @pytest.fixture
