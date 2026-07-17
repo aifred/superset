@@ -18,7 +18,9 @@
  */
 import { useEffect } from 'react';
 import { t } from '@apache-superset/core/translation';
-import { Spin, Select, Form } from 'antd';
+import { Select } from 'antd';
+import { Form } from '@superset-ui/core/components';
+import { Spin } from '@superset-ui/core/components/Spin';
 import { withJsonFormsControlProps } from '@jsonforms/react';
 import type {
   JsonSchema,

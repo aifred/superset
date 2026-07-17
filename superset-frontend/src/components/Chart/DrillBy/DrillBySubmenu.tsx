@@ -39,13 +39,13 @@ import { css, useTheme } from '@apache-superset/core/theme';
 import {
   Constants,
   Input,
+  type InputRef,
   Loading,
   Popover,
   Icons,
 } from '@superset-ui/core/components';
 import { debounce } from 'lodash-es';
 import { FixedSizeList as List } from 'react-window';
-import { InputRef } from 'antd';
 import { MenuItemTooltip } from '../DisabledMenuItemTooltip';
 import { VirtualizedMenuItem } from '../MenuItemWithTruncation';
 import { Dataset } from '../types';
