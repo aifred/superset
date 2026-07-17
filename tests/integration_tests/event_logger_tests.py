@@ -229,7 +229,7 @@ class TestEventLogger(unittest.TestCase):
                 payload_override={"engine": "sqlite"},
             )
 
-        assert logger.records[0]["user_id"] == None  # noqa: E711
+        assert logger.records[0]["user_id"] is None
 
     @patch.object(DBEventLogger, "log")
     def test_log_this_with_context_and_extra_payload(self, mock_log):
