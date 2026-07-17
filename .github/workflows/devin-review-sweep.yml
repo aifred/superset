@@ -113,8 +113,8 @@ jobs:
     uses: ./.github/workflows/devin-review-complete.yml
     with:
       pr_number: ${{ matrix.pr }}
-      # Dispatch honors its input; scheduled runs default to live unless the
-      # DEVIN_SWEEP_DRY_RUN repo variable is set to anything other than 'false'
-      # (so operators can roll out in dry-run first, then flip the variable).
+      # Dispatch honors its input. Scheduled runs default to dry-run (compute
+      # only) unless the DEVIN_SWEEP_DRY_RUN repo variable is explicitly set to
+      # 'false', so operators roll out in dry-run first, then flip the variable.
       dry_run: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name == 'schedule' && vars.DEVIN_SWEEP_DRY_RUN != 'false') }}
     secrets: inherit
