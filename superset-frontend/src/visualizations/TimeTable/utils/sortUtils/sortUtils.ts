@@ -16,8 +16,25 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import type { ReactElement } from 'react';
+import type { Row } from 'react-table';
 import type { ColumnConfig, Entry } from '../../types';
 import { calculateCellValue } from '../valueCalculations/valueCalculations';
+
+/**
+ * Props carried by the cell React elements that TimeTable renders for
+ * sortable columns. ValueCell exposes `reversedEntries`, while
+ * Sparkline/SparklineCell exposes `entries`.
+ */
+interface SortableCellProps {
+  valueField: string;
+  column: ColumnConfig;
+  reversedEntries?: Entry[];
+  entries?: Entry[];
+}
+
+type SortableCell = ReactElement<SortableCellProps>;
+
 /**
  * Simple numeric value comparison that handles null, undefined, and mixed types
  * @param a - First value to compare
@@ -26,8 +43,8 @@ import { calculateCellValue } from '../valueCalculations/valueCalculations';
  * @returns Numeric comparison result
  */
 function compareValues(
-  a: any,
-  b: any,
+  a: number | string | null | undefined,
+  b: number | string | null | undefined,
   nanTreatment: 'asSmallest' | 'asLargest' | 'alwaysLast' = 'asSmallest',
 ): number {
   const numA = typeof a === 'string' ? parseFloat(a) : a;
@@ -55,33 +72,21 @@ function compareValues(
  * this function, so we only return the raw comparison result.
  */
 export function sortNumberWithMixedTypes(
-  rowA: any,
-  rowB: any,
+  rowA: Row,
+  rowB: Row,
   columnId: string,
 ) {
-  const cellA = rowA.values?.[columnId];
-  const cellB = rowB.values?.[columnId];
+  // react-table types cell values as `any`, so narrow to the element shape
+  // TimeTable actually renders into these columns.
+  const cellA = rowA.values?.[columnId] as SortableCell | undefined;
+  const cellB = rowB.values?.[columnId] as SortableCell | undefined;
 
   // Both ValueCell and Sparkline cells pass React elements here.
   // ValueCell uses { valueField, column, reversedEntries }
   // Sparkline/SparklineCell uses { valueField, column, entries }
   // Normalize to reversedEntries before delegating to calculateCellValue.
-  const propsA = cellA?.props as
-    | {
-        valueField: string;
-        column: ColumnConfig;
-        reversedEntries?: Entry[];
-        entries?: Entry[];
-      }
-    | undefined;
-  const propsB = cellB?.props as
-    | {
-        valueField: string;
-        column: ColumnConfig;
-        reversedEntries?: Entry[];
-        entries?: Entry[];
-      }
-    | undefined;
+  const propsA = cellA?.props;
+  const propsB = cellB?.props;
 
   const reversedEntriesA =
     propsA?.reversedEntries ?? propsA?.entries?.slice().reverse();
