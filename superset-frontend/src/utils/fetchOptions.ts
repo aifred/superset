@@ -22,17 +22,19 @@ import { SupersetClient } from '@superset-ui/core';
 import rison from 'rison';
 import { Dispatch, SetStateAction } from 'react';
 
-interface FetchPaginatedOptions {
+type LoadingState = boolean | Record<string, boolean>;
+
+interface FetchPaginatedOptions<RawResult = unknown, MappedResult = RawResult> {
   endpoint: string;
   pageSize?: number;
-  setData: (data: any[]) => void;
-  setLoadingState: Dispatch<SetStateAction<any>>;
+  setData: (data: MappedResult[]) => void;
+  setLoadingState: Dispatch<SetStateAction<LoadingState>>;
   filters?: SupersetFilter[];
   orderBy?: { column: string; direction: 'asc' | 'desc' };
   loadingKey: string;
   addDangerToast: (message: string) => void;
   errorMessage?: string;
-  mapResult?: (item: any) => any;
+  mapResult?: (item: RawResult) => MappedResult;
 }
 
 interface QueryObj {
@@ -49,7 +51,10 @@ interface SupersetFilter {
   value: string | number | (string | number)[];
 }
 
-export const fetchPaginatedData = async ({
+export const fetchPaginatedData = async <
+  RawResult = unknown,
+  MappedResult = RawResult,
+>({
   endpoint,
   pageSize = 100,
   setData,
@@ -59,8 +64,8 @@ export const fetchPaginatedData = async ({
   loadingKey,
   addDangerToast,
   errorMessage = 'Error while fetching data',
-  mapResult = (item: any) => item,
-}: FetchPaginatedOptions) => {
+  mapResult = (item: RawResult) => item as unknown as MappedResult,
+}: FetchPaginatedOptions<RawResult, MappedResult>) => {
   try {
     const fetchPage = async (pageIndex: number) => {
       const queryObj: QueryObj = {
@@ -82,7 +87,7 @@ export const fetchPaginatedData = async ({
 
       return {
         count: response.json.count,
-        results: response.json.result.map(mapResult),
+        results: (response.json.result as RawResult[]).map(mapResult),
       };
     };
 
@@ -114,7 +119,7 @@ export const fetchPaginatedData = async ({
   } catch (err) {
     addDangerToast(t(errorMessage));
   } finally {
-    setLoadingState((prev: boolean | Record<string, boolean>) => {
+    setLoadingState((prev: LoadingState) => {
       if (typeof prev === 'boolean') {
         return false;
       }
