@@ -12,9 +12,9 @@ name: Devin auto-ship review sweep
 
 on:
   schedule:
-    # Every 15 minutes. GitHub cron is best-effort and can lag under load; that
+    # Every 5 minutes. GitHub cron is best-effort and can lag under load; that
     # only delays healing, it does not affect correctness.
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -105,6 +105,12 @@ jobs:
   reconcile:
     needs: discover
     if: needs.discover.outputs.prs != '' && needs.discover.outputs.prs != '[]'
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      statuses: write
+      issues: write
     strategy:
       fail-fast: false
       max-parallel: 3
