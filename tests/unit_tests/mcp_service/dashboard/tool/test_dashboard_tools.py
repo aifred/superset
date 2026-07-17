@@ -1085,7 +1085,43 @@ async def test_get_dashboard_info_embedded_uuid_none_when_not_embedded(
         assert result.data.get("embedded_uuid") is None
 
 
-# TODO (Phase 3+): Add tests for get_dashboard_available_filters tool
+# The standalone get_dashboard_available_filters tool was consolidated into the
+# unified get_schema tool (see superset/mcp_service/mcp_core.py), so dashboard
+# available-filter discovery is exercised through get_schema(model_type="dashboard").
+
+
+@patch("superset.daos.dashboard.DashboardDAO.get_filterable_columns_and_operators")
+@pytest.mark.asyncio
+async def test_get_dashboard_available_filters_success(mock_filters, mcp_server):
+    """Happy path: get_schema returns the dashboard's available filter columns."""
+    mock_filters.return_value = {
+        "dashboard_title": ["eq", "ilike"],
+        "published": ["eq"],
+        "created_by_fk": ["eq", "in"],
+    }
+
+    async with Client(mcp_server) as client:
+        result = await client.call_tool(
+            "get_schema", {"request": {"model_type": "dashboard"}}
+        )
+
+    data = json.loads(result.content[0].text)
+    info = data["schema_info"]
+
+    assert info["model_type"] == "dashboard"
+    filter_columns = info["filter_columns"]
+    assert filter_columns["dashboard_title"] == ["eq", "ilike"]
+    assert filter_columns["published"] == ["eq"]
+
+
+@pytest.mark.asyncio
+async def test_get_dashboard_available_filters_invalid_model_type(mcp_server):
+    """Error path: an unsupported model_type is rejected with a ToolError."""
+    async with Client(mcp_server) as client:
+        with pytest.raises(ToolError):
+            await client.call_tool(
+                "get_schema", {"request": {"model_type": "not_a_model"}}
+            )
 
 
 @patch("superset.mcp_service.mcp_core.ModelGetInfoCore._find_object")
