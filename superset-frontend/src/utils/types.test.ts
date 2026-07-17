@@ -1,4 +1,5 @@
-/* Licensed to the Apache Software Foundation (ASF) under one
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
@@ -15,13 +16,21 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import { isIterable } from 'src/utils/types';
 
-// Create a new type by picking only the keys with V type from T
-export type OnlyKeyWithType<T, V> = keyof {
-  [K in keyof T as NonNullable<T[K]> extends V ? K : never]: T[K];
-};
+test('isIterable returns true for iterable values', () => {
+  expect(isIterable([])).toBe(true);
+  expect(isIterable([1, 2, 3])).toBe(true);
+  expect(isIterable('string')).toBe(true);
+  expect(isIterable(new Set([1, 2]))).toBe(true);
+  expect(isIterable(new Map())).toBe(true);
+});
 
-export const isIterable = (obj: unknown): obj is Iterable<unknown> =>
-  obj != null &&
-  typeof (obj as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
-    'function';
+test('isIterable returns false for non-iterable values', () => {
+  expect(isIterable(null)).toBe(false);
+  expect(isIterable(undefined)).toBe(false);
+  expect(isIterable(42)).toBe(false);
+  expect(isIterable({})).toBe(false);
+  expect(isIterable({ length: 3 })).toBe(false);
+  expect(isIterable(true)).toBe(false);
+});

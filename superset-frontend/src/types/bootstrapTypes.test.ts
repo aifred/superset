@@ -1,4 +1,5 @@
-/* Licensed to the Apache Software Foundation (ASF) under one
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
@@ -15,13 +16,18 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import { isUser } from 'src/types/bootstrapTypes';
 
-// Create a new type by picking only the keys with V type from T
-export type OnlyKeyWithType<T, V> = keyof {
-  [K in keyof T as NonNullable<T[K]> extends V ? K : never]: T[K];
-};
+test('isUser returns true for a plain object with a username', () => {
+  expect(isUser({ username: 'admin' })).toBe(true);
+});
 
-export const isIterable = (obj: unknown): obj is Iterable<unknown> =>
-  obj != null &&
-  typeof (obj as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
-    'function';
+test('isUser returns false for non-user values', () => {
+  expect(isUser(null)).toBe(false);
+  expect(isUser(undefined)).toBe(false);
+  expect(isUser('admin')).toBe(false);
+  expect(isUser(42)).toBe(false);
+  expect(isUser([])).toBe(false);
+  expect(isUser({})).toBe(false);
+  expect(isUser({ name: 'admin' })).toBe(false);
+});

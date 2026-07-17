@@ -197,8 +197,8 @@ export interface BootstrapThemeData {
   hasCustomThemes: boolean;
 }
 
-export function isUser(user: any): user is User {
-  return isPlainObject(user) && 'username' in user;
+export function isUser(user: unknown): user is User {
+  return isPlainObject(user) && 'username' in (user as Record<string, unknown>);
 }
 
 export function isUserWithPermissionsAndRoles(

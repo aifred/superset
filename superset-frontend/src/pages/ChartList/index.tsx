@@ -228,9 +228,10 @@ function ChartList(props: ChartListProps) {
   // TODO: Fix usage of localStorage keying on the user id
   const userSettings = useMemo(
     () =>
-      dangerouslyGetItemDoNotUse(userId?.toString(), null) as {
-        thumbnails: boolean;
-      },
+      dangerouslyGetItemDoNotUse<{ thumbnails: boolean } | null>(
+        userId?.toString(),
+        null,
+      ),
     [userId],
   );
 

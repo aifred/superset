@@ -105,7 +105,10 @@ function TagList(props: TagListProps) {
   );
 
   // TODO: Fix usage of localStorage keying on the user id
-  const userKey = dangerouslyGetItemDoNotUse(userId?.toString(), null);
+  const userKey = dangerouslyGetItemDoNotUse<{ thumbnails: boolean } | null>(
+    userId?.toString(),
+    null,
+  );
 
   const canDelete = hasPerm('can_write');
   const canEdit = hasPerm('can_write');
