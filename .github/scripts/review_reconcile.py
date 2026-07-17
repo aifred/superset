@@ -244,10 +244,16 @@ def main() -> int:
     issue_key = review_complete.extract_issue_key(pr)
     escalated = "true" if _is_escalated(pr) else "false"
 
-    # For workflow_run events, ignore CI that ran against a superseded commit;
-    # a newer push will produce its own completion event.
+    # For workflow_run events (not the explicit-pr sweep path), ignore CI that
+    # ran against a superseded commit; a newer push will produce its own
+    # completion event.
     wf_sha = os.environ.get("WF_HEAD_SHA", "")
-    if os.environ.get("EVENT_NAME") == "workflow_run" and wf_sha and wf_sha != head_sha:
+    if (
+        os.environ.get("EVENT_NAME") == "workflow_run"
+        and not os.environ.get("INPUT_PR_NUMBER")
+        and wf_sha
+        and wf_sha != head_sha
+    ):
         print(
             f"workflow_run head {wf_sha} != PR head {head_sha}; waiting for newer CI."
         )
@@ -270,8 +276,14 @@ def main() -> int:
 
     # On a workflow_run event a required check has just completed, so a pending
     # reading is most likely rollup lag: re-query briefly to let it settle
-    # rather than exiting quietly and waiting for an unrelated later event.
-    if ci_status == "pending" and os.environ.get("EVENT_NAME") == "workflow_run":
+    # rather than exiting quietly and waiting for an unrelated later event. Skip
+    # this when an explicit PR number is provided (sweep path), because the
+    # triggering event may refer to a different PR.
+    if (
+        ci_status == "pending"
+        and os.environ.get("EVENT_NAME") == "workflow_run"
+        and not os.environ.get("INPUT_PR_NUMBER")
+    ):
         for _ in range(_ROLLUP_SETTLE_RETRIES):
             time.sleep(_ROLLUP_SETTLE_DELAY_SECONDS)
             refreshed = _fetch_pr(repo, pr_number)

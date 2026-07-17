@@ -21,6 +21,13 @@ on:
         description: "Compute outcomes without approving/merging/posting status."
         type: boolean
         default: true
+  workflow_run:
+    # Fallback for forks that do not receive scheduled runs: run the sweep
+    # whenever the per-PR gate finishes, so a dropped workflow_run event is
+    # healed by the next delivered CI or verdict event.
+    workflows:
+      - "Devin auto-ship review complete"
+    types: [completed]
 
 concurrency:
   group: devin-review-sweep
@@ -119,8 +126,9 @@ jobs:
     uses: ./.github/workflows/devin-review-complete.yml
     with:
       pr_number: ${{ matrix.pr }}
-      # Dispatch honors its input. Scheduled runs default to dry-run (compute
-      # only) unless the DEVIN_SWEEP_DRY_RUN repo variable is explicitly set to
-      # 'false', so operators roll out in dry-run first, then flip the variable.
-      dry_run: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name == 'schedule' && vars.DEVIN_SWEEP_DRY_RUN != 'false') }}
+      # Dispatch honors its input. Scheduled and workflow_run sweeps default to
+      # dry-run (compute only) unless the DEVIN_SWEEP_DRY_RUN repo variable is
+      # explicitly set to 'false', so operators roll out in dry-run first, then
+      # flip the variable.
+      dry_run: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || ((github.event_name == 'schedule' || github.event_name == 'workflow_run') && vars.DEVIN_SWEEP_DRY_RUN != 'false') }}
     secrets: inherit
