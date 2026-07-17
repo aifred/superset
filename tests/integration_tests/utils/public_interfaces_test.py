@@ -101,3 +101,9 @@ def test_class_hash():
             return self.a + self.b
 
     assert original_hash == compute_hash(SomeClass)
+
+
+def test_compute_hash_invalid_object():
+    """Test that hashing a non-function, non-class object raises TypeError."""
+    with pytest.raises(TypeError):
+        compute_hash("not a function or class")
