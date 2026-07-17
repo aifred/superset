@@ -1,5 +1,5 @@
 name: Devin auto-ship review sweep
-
+ 
 # Safety net for the event-driven approval gate (devin-review-complete.yml).
 #
 # That gate only re-runs on issue_comment (the verdict) and workflow_run
