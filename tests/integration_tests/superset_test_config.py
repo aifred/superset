@@ -165,4 +165,4 @@ PRESERVE_CONTEXT_ON_EXCEPTION = False
 # Dashboard API: Return only custom tags (performance optimization)
 DASHBOARD_LIST_CUSTOM_TAGS_ONLY = True
 
-print("Loaded TEST config for INTEGRATION tests")
+logger.info("Loaded TEST config for INTEGRATION tests")  # noqa: F405
