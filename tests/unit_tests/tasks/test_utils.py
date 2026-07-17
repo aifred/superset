@@ -557,7 +557,7 @@ def test_get_executor(
     elif model_type == ModelType.CHART:
         model = Slice
     else:
-        raise Exception(f"Unsupported model type: {model_type}")
+        raise ValueError(f"Unsupported model type: {model_type}")
 
     obj = model(
         id=1,

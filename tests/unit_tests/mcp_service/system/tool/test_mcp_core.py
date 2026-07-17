@@ -529,7 +529,7 @@ def test_model_get_info_tool_exception():
     class FailingDAO:
         @classmethod
         def find_by_id(cls, id, **kwargs):
-            raise Exception("fail")
+            raise RuntimeError("fail")
 
     tool = ModelGetInfoCore(
         dao_class=FailingDAO,
@@ -537,7 +537,7 @@ def test_model_get_info_tool_exception():
         error_schema=DummyErrorSchema,
         serializer=lambda obj: DummyOutputSchema(id=obj.id, name=obj.name),
     )
-    with pytest.raises(Exception, match="fail") as exc:
+    with pytest.raises(RuntimeError, match="fail") as exc:
         tool.run_tool(1)
     assert "fail" in str(exc.value)
 
@@ -571,7 +571,7 @@ class SchemaDAO:
 class FailingSchemaDAO:
     @classmethod
     def get_filterable_columns_and_operators(cls):
-        raise Exception("Database connection failed")
+        raise RuntimeError("Database connection failed")
 
 
 def test_model_get_schema_core_basic():

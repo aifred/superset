@@ -113,7 +113,7 @@ def test_cache_warmup_collects_errors_and_destroys(app_context: None) -> None:
 
     def side_effect(url: str, _element: str) -> None:
         if url.endswith("boom"):
-            raise Exception("screenshot failed")
+            raise RuntimeError("screenshot failed")
 
     with (
         mock.patch(
