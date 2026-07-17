@@ -17,7 +17,7 @@
 
 from datetime import datetime
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -39,7 +39,7 @@ class DummyOutputSchema(BaseModel):
 
 # Dummy list schema
 class DummyListSchema(BaseModel):
-    items: List[Any]
+    items: list[Any]
     count: int
     total_count: int
     page: int
@@ -47,11 +47,11 @@ class DummyListSchema(BaseModel):
     total_pages: int
     has_previous: bool
     has_next: bool
-    columns_requested: List[str]
-    columns_loaded: List[str]
-    columns_available: List[str]
-    sortable_columns: List[str]
-    filters_applied: List[Any]
+    columns_requested: list[str]
+    columns_loaded: list[str]
+    columns_available: list[str]
+    sortable_columns: list[str]
+    filters_applied: list[Any]
     pagination: Any
     timestamp: datetime
 
@@ -545,13 +545,13 @@ def test_model_get_info_tool_exception():
 # Schema output model for ModelGetSchemaCore tests
 class DummySchemaInfo(BaseModel):
     model_type: str
-    select_columns: List[Any]
-    filter_columns: Dict[str, List[str]]
-    sortable_columns: List[str]
-    default_select: List[str]
+    select_columns: list[Any]
+    filter_columns: dict[str, list[str]]
+    sortable_columns: list[str]
+    default_select: list[str]
     default_sort: str
     default_sort_direction: str
-    search_columns: List[str]
+    search_columns: list[str]
 
 
 class DummyColumnMetadata(BaseModel):
