@@ -105,6 +105,12 @@ jobs:
   reconcile:
     needs: discover
     if: needs.discover.outputs.prs != '' && needs.discover.outputs.prs != '[]'
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      statuses: write
+      issues: write
     strategy:
       fail-fast: false
       max-parallel: 3
