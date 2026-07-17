@@ -18,6 +18,29 @@
  */
 import type { ColumnConfig, Entry } from '../../types';
 import { calculateCellValue } from '../valueCalculations/valueCalculations';
+
+type CompareValue = number | string | null | undefined;
+
+/**
+ * Props carried by the React elements react-table stores as cell values.
+ * ValueCell uses `reversedEntries`; Sparkline/SparklineCell uses `entries`.
+ */
+interface CellProps {
+  valueField: string;
+  column: ColumnConfig;
+  reversedEntries?: Entry[];
+  entries?: Entry[];
+}
+
+/**
+ * Minimal shape of a react-table row consumed by the sort comparator. Each
+ * value is the React element rendered for that column, whose `props` carry the
+ * data needed to recompute the cell value.
+ */
+interface SortRow {
+  values?: Record<string, { props?: CellProps } | undefined>;
+}
+
 /**
  * Simple numeric value comparison that handles null, undefined, and mixed types
  * @param a - First value to compare
@@ -26,8 +49,8 @@ import { calculateCellValue } from '../valueCalculations/valueCalculations';
  * @returns Numeric comparison result
  */
 function compareValues(
-  a: any,
-  b: any,
+  a: CompareValue,
+  b: CompareValue,
   nanTreatment: 'asSmallest' | 'asLargest' | 'alwaysLast' = 'asSmallest',
 ): number {
   const numA = typeof a === 'string' ? parseFloat(a) : a;
@@ -55,10 +78,10 @@ function compareValues(
  * this function, so we only return the raw comparison result.
  */
 export function sortNumberWithMixedTypes(
-  rowA: any,
-  rowB: any,
+  rowA: SortRow,
+  rowB: SortRow,
   columnId: string,
-) {
+): number {
   const cellA = rowA.values?.[columnId];
   const cellB = rowB.values?.[columnId];
 
@@ -66,22 +89,8 @@ export function sortNumberWithMixedTypes(
   // ValueCell uses { valueField, column, reversedEntries }
   // Sparkline/SparklineCell uses { valueField, column, entries }
   // Normalize to reversedEntries before delegating to calculateCellValue.
-  const propsA = cellA?.props as
-    | {
-        valueField: string;
-        column: ColumnConfig;
-        reversedEntries?: Entry[];
-        entries?: Entry[];
-      }
-    | undefined;
-  const propsB = cellB?.props as
-    | {
-        valueField: string;
-        column: ColumnConfig;
-        reversedEntries?: Entry[];
-        entries?: Entry[];
-      }
-    | undefined;
+  const propsA = cellA?.props;
+  const propsB = cellB?.props;
 
   const reversedEntriesA =
     propsA?.reversedEntries ?? propsA?.entries?.slice().reverse();
