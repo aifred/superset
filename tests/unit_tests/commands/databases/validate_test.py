@@ -512,7 +512,7 @@ def test_get_ssh_tunnel_errors_skipped_when_parameters_ssh_false(
     mocker: MockerFixture,
 ) -> None:
     """
-    An explicit ``parameters.ssh == False`` is authoritative and skips SSH
+    An explicit ``parameters.ssh is False`` is authoritative and skips SSH
     tunnel validation even when a stale ``ssh_tunnel`` object is still in
     the payload — otherwise toggling SSH off after partial entry would
     leave hidden validation errors blocking save.

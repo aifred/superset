@@ -95,7 +95,7 @@ class TestDatabaseModel(SupersetTestCase):
         assert col.is_temporal is False
 
     def test_temporal_varchar(self):
-        """Ensure a column with is_dttm set to true evaluates to is_temporal == True"""
+        """Ensure a column with is_dttm set to true evaluates to is_temporal is True"""
 
         database = get_example_database()
         tbl = SqlaTable(table_name="test_tbl", database=database)

@@ -39,7 +39,7 @@ class TestPostgresDbEngineSpec(SupersetTestCase):
         """
 
         """ Make sure postgres doesn't try to remove schema name from table name
-        ie. when try_remove_schema_from_table_name == False. """
+        ie. when try_remove_schema_from_table_name is False. """
         inspector = mock.Mock()
         inspector.get_table_names = mock.Mock(return_value=["schema.table", "table_2"])
         inspector.get_foreign_table_names = mock.Mock(return_value=["table_3"])
