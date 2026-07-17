@@ -16,7 +16,6 @@
 # under the License.
 """Tests for SupersetAppInitializer.check_secret_key."""
 
-from typing import Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +25,7 @@ from superset.initialization import SupersetAppInitializer
 
 
 def _make_initializer(
-    secret_key: Optional[str],
+    secret_key: str | None,
     *,
     debug: bool = False,
     testing: bool = False,
@@ -43,7 +42,7 @@ def _make_initializer(
 
 @pytest.mark.parametrize("secret_key", ["", None, CHANGE_ME_SECRET_KEY])
 def test_check_secret_key_refuses_to_start_when_insecure(
-    secret_key: Optional[str],
+    secret_key: str | None,
 ) -> None:
     """An empty/missing or placeholder key fails closed in non-debug mode."""
     initializer = _make_initializer(secret_key)
@@ -54,7 +53,7 @@ def test_check_secret_key_refuses_to_start_when_insecure(
 
 @pytest.mark.parametrize("secret_key", ["", None, CHANGE_ME_SECRET_KEY])
 def test_check_secret_key_warns_but_starts_in_debug(
-    secret_key: Optional[str],
+    secret_key: str | None,
 ) -> None:
     """In debug/testing mode an insecure key warns but does not exit."""
     initializer = _make_initializer(secret_key, debug=True)
