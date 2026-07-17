@@ -15,8 +15,48 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import io
+from unittest.mock import patch
 
-from superset.utils.log import get_logger_from_status
+from superset.utils import json
+from superset.utils.log import get_logger_from_status, StdOutEventLogger
+
+
+def test_stdout_event_logger_emits_json_line() -> None:
+    logger = StdOutEventLogger()
+    buffer = io.StringIO()
+
+    with patch("superset.utils.log.sys.stdout", buffer):
+        logger.log(
+            user_id=1,
+            action="test_action",
+            dashboard_id=2,
+            duration_ms=100,
+            slice_id=3,
+            referrer="http://example.com",
+            curated_payload={"force": True},
+            curated_form_data={"viz_type": "table"},
+            extra="value",
+        )
+
+    output = buffer.getvalue()
+    # a single machine-parseable line terminated by one trailing newline
+    assert output.endswith("\n")
+    assert output.count("\n") == 1
+    # no legacy "StdOutEventLogger: " prefix / extra space
+    assert not output.startswith("StdOutEventLogger")
+
+    assert json.loads(output) == {
+        "user_id": 1,
+        "action": "test_action",
+        "dashboard_id": 2,
+        "duration_ms": 100,
+        "slice_id": 3,
+        "referrer": "http://example.com",
+        "curated_payload": {"force": True},
+        "curated_form_data": {"viz_type": "table"},
+        "extra": "value",
+    }
 
 
 def test_log_from_status_exception() -> None:

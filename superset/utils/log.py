@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import sys
 import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -454,4 +455,5 @@ class StdOutEventLogger(AbstractEventLogger):
             curated_form_data=curated_form_data,
             **kwargs,
         )
-        print("StdOutEventLogger: ", data)
+        sys.stdout.write(json.dumps(data) + "\n")
+        sys.stdout.flush()
