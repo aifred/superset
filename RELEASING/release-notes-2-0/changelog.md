@@ -314,7 +314,7 @@ under the License.
 - [#19166](https://github.com/apache/superset/pull/19166) fix: time filter should be [start, end) (@zhaoyongjie)
 
 **Others**
-- [#20116](https://github.com/apache/superset/pull/20116) style(typo): occurred -> occurred (@sfirke)
+- [#20116](https://github.com/apache/superset/pull/20116) style(typo): occured -> occurred (@sfirke)
 - [#20401](https://github.com/apache/superset/pull/20401) chore: add action to welcome new users (@eschutho)
 - [#20269](https://github.com/apache/superset/pull/20269) chore(docs): Remove cache warming documentation (@ajwhite)
 - [#20194](https://github.com/apache/superset/pull/20194) chore: Removes unused vars (@michael-s-molina)
