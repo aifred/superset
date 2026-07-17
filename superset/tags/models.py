@@ -157,9 +157,7 @@ def get_object_type(class_name: str) -> ObjectType:
     try:
         return mapping[class_name.lower()]
     except KeyError as ex:
-        raise Exception(  # pylint: disable=broad-exception-raised
-            f"No mapping found for {class_name}"
-        ) from ex
+        raise ValueError(f"No mapping found for {class_name}") from ex
 
 
 class ObjectUpdater:

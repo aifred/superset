@@ -18,10 +18,18 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from markupsafe import Markup
 from sqlalchemy.orm import Session
 
-from superset.tags.models import get_tag, Tag, TaggedObject, TagType
+from superset.tags.models import (
+    get_object_type,
+    get_tag,
+    ObjectType,
+    Tag,
+    TaggedObject,
+    TagType,
+)
 
 
 def test_get_tag_returns_plain_string_not_markup() -> None:
@@ -261,6 +269,20 @@ def test_tag_name_type_after_database_operation() -> None:
     assert added_tag.name.__class__ is str, (
         "Tag name should be exactly str type, not a subclass"
     )
+
+
+def test_get_object_type_returns_mapped_type() -> None:
+    """get_object_type() maps known class names to their ObjectType."""
+    assert get_object_type("slice") == ObjectType.chart
+    assert get_object_type("Dashboard") == ObjectType.dashboard
+    assert get_object_type("query") == ObjectType.query
+    assert get_object_type("dataset") == ObjectType.dataset
+
+
+def test_get_object_type_unknown_raises_value_error() -> None:
+    """get_object_type() raises ValueError for an unknown class name."""
+    with pytest.raises(ValueError, match="No mapping found for unknown"):
+        get_object_type("unknown")
 
 
 def test_tagged_object_object_id_has_no_foreign_keys() -> None:

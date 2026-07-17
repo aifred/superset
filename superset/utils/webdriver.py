@@ -655,9 +655,7 @@ class WebDriverSelenium(WebDriverProxy):
                 pixel_density
             )
         else:
-            raise Exception(  # pylint: disable=broad-exception-raised
-                f"Webdriver name ({self._driver_type}) not supported"
-            )
+            raise ValueError(f"Webdriver name ({self._driver_type}) not supported")
 
         # Add additional arguments from config
         options = kwargs["options"]

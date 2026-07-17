@@ -89,6 +89,23 @@ class TestWebDriverSelenium:
         assert call_kwargs["command_executor_timeout"] == 25.0
 
     @patch("superset.utils.webdriver.app")
+    def test_unsupported_driver_type_raises_value_error(self, mock_app_patch, mock_app):
+        """An unsupported webdriver type raises ValueError, not a bare Exception."""
+        mock_app_patch.config = {
+            "WEBDRIVER_OPTION_ARGS": [],
+            "SCREENSHOT_LOCATE_WAIT": 10,
+            "SCREENSHOT_LOAD_WAIT": 10,
+            "WEBDRIVER_WINDOW": {},
+            "WEBDRIVER_CONFIGURATION": {},
+        }
+
+        driver = WebDriverSelenium(driver_type="not_a_real_driver")
+        with pytest.raises(
+            ValueError, match=r"Webdriver name \(not_a_real_driver\) not supported"
+        ):
+            driver.create()
+
+    @patch("superset.utils.webdriver.app")
     @patch("superset.utils.webdriver.chrome")
     def test_timeout_none_handling(self, mock_chrome, mock_app_patch, mock_app):
         """Test that None, 'None', and 'null' timeout values are set to None."""
