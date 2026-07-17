@@ -241,7 +241,6 @@ class TestCore(SupersetTestCase):
             ]
         for name, method, url in urls:
             logger.info("[%s]/[%s]: %s", name, method, url)
-            print(f"[{name}]/[{method}]: {url}")
             resp = self.client.get(url)
             assert resp.status_code == 200
 
@@ -272,8 +271,7 @@ class TestCore(SupersetTestCase):
         urls = []
         for slc in db.session.query(Slc).all():
             urls += [(slc.slice_name, "slice_url", slc.slice_url)]
-        for name, method, url in urls:
-            print(f"[{name}]/[{method}]: {url}")
+        for _name, _method, url in urls:
             self.client.get(url)
 
     def test_doctests(self):
