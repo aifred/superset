@@ -163,8 +163,14 @@ jobs:
           # submit a fresh approval when this auto-ship gate has not already
           # approved the PR (marker text uniquely identifies our review), then
           # (re-)enable auto-merge, which is a no-op once already enabled.
+          # Emit one line per matching review and count with wc, so the count is
+          # correct across --paginate pages (per-page `| length` would print one
+          # integer per page). Coalesce a null body to "" before test().
+          # '|| approved=0': under set -e -o pipefail a transient gh/API error
+          # would otherwise abort the whole approve step; treat it as "not yet
+          # approved" so this run can still proceed (or the sweep retries).
           approved=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
-            --jq '[.[] | select(.state == "APPROVED") | select(.body | test("approved by auto-ship"))] | length' 2>/dev/null || echo 0)
+            --jq '.[] | select(.state == "APPROVED") | select((.body // "") | test("approved by auto-ship"))' 2>/dev/null | wc -l | tr -d ' ') || approved=0
           if [ "${approved:-0}" -gt 0 ]; then
             echo "Auto-ship approval already present; skipping duplicate review."
           else
