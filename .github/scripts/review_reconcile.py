@@ -83,7 +83,16 @@ def _is_pending(c: dict[str, Any]) -> bool:
 
 
 def _resolve_pr_number(repo: str) -> str:
-    """Return the PR number for either triggering event, or '' if none."""
+    """Return the PR number for the triggering event or explicit input, or ''.
+
+    A scheduled/`workflow_call` sweep passes the target PR directly via
+    ``INPUT_PR_NUMBER`` so the same reconcile path can heal a PR whose
+    ``workflow_run`` completion event was never delivered. When set, it takes
+    precedence over event-derived resolution.
+    """
+    if explicit := os.environ.get("INPUT_PR_NUMBER", "").strip():
+        return explicit
+
     event = os.environ.get("EVENT_NAME", "")
 
     if event == "issue_comment":

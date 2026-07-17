@@ -1,0 +1,120 @@
+name: Devin auto-ship review sweep
+
+# Safety net for the event-driven approval gate (devin-review-complete.yml).
+#
+# That gate only re-runs on issue_comment (the verdict) and workflow_run
+# (CI completions). When GitHub drops a workflow_run delivery — which happens
+# under heavy Actions load — a PR whose verdict and CI both settled across the
+# missed event is stranded at devin-review=pending forever, because nothing ever
+# reconciles the now-consistent state. This scheduled sweep finds such PRs and
+# re-invokes the exact same gate workflow per PR, so a dropped event self-heals
+# within one interval instead of stalling indefinitely.
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub cron is best-effort and can lag under load; that
+    # only delays healing, it does not affect correctness.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute outcomes without approving/merging/posting status."
+        type: boolean
+        default: true
+
+concurrency:
+  group: devin-review-sweep
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      prs: ${{ steps.find.outputs.prs }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Find PRs stuck at devin-review=pending
+        id: find
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          REPO = os.environ["REPO"]
+
+          def gh_json(args):
+              proc = subprocess.run(
+                  args, capture_output=True, text=True, check=False,
+                  env={**os.environ, "GH_TOKEN": os.environ.get("GH_TOKEN", "")},
+              )
+              if proc.returncode != 0:
+                  print(f"gh failed ({' '.join(args)}): {proc.stderr.strip()}", file=sys.stderr)
+                  return None
+              if not proc.stdout.strip():
+                  return None
+              return json.loads(proc.stdout)
+
+          # Open, non-draft PRs; the gate itself re-checks verdict/CI/policy, so
+          # discovery only needs the cheap "is it still pending?" signal.
+          prs = gh_json([
+              "gh", "pr", "list", "--repo", REPO, "--state", "open",
+              "--limit", "200",
+              "--json", "number,isDraft,labels,headRefOid",
+          ]) or []
+
+          stuck = []
+          for pr in prs:
+              if pr.get("isDraft"):
+                  continue
+              labels = {l.get("name") for l in (pr.get("labels") or [])}
+              # A human escalation must stay parked until a human clears it.
+              if "needs-human" in labels:
+                  continue
+              sha = pr.get("headRefOid")
+              if not sha:
+                  continue
+              statuses = gh_json([
+                  "gh", "api", f"repos/{REPO}/commits/{sha}/statuses",
+              ]) or []
+              # statuses are newest-first; take the first devin-review entry.
+              state = None
+              for s in statuses:
+                  if s.get("context") == "devin-review":
+                      state = s.get("state")
+                      break
+              if state == "pending":
+                  stuck.append(str(pr["number"]))
+
+          print(f"Stuck PRs: {stuck}")
+          out = os.environ.get("GITHUB_OUTPUT")
+          if out:
+              with open(out, "a", encoding="utf-8") as f:
+                  f.write(f"prs={json.dumps(stuck)}\n")
+          PY
+
+  reconcile:
+    needs: discover
+    if: needs.discover.outputs.prs != '' && needs.discover.outputs.prs != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        pr: ${{ fromJson(needs.discover.outputs.prs) }}
+    uses: ./.github/workflows/devin-review-complete.yml
+    with:
+      pr_number: ${{ matrix.pr }}
+      # Dispatch honors its input; scheduled runs default to live unless the
+      # DEVIN_SWEEP_DRY_RUN repo variable is set to anything other than 'false'
+      # (so operators can roll out in dry-run first, then flip the variable).
+      dry_run: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name == 'schedule' && vars.DEVIN_SWEEP_DRY_RUN != 'false') }}
+    secrets: inherit

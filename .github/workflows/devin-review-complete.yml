@@ -3,16 +3,44 @@ name: Devin auto-ship review complete
 on:
   issue_comment:
     types: [created]
+  # Narrowed from ["*"] to only the workflows that carry merge-gating checks.
+  # Firing on every workflow completion produced hundreds of gate invocations a
+  # day with heavy concurrency churn, which raised the rate at which GitHub
+  # dropped workflow_run deliveries and stranded PRs. The scheduled sweep
+  # (devin-review-sweep.yml) is the safety net that heals any missed event, so a
+  # too-narrow list here only adds latency, never a permanent stall.
   workflow_run:
-    workflows: ["*"]
+    workflows:
+      - "E2E"
+      - "Playwright Experimental Tests"
+      - "Python-Integration"
+      - "Python-Unit"
+      - "Python Presto/Hive"
+      - "Frontend Build CI (unit tests, linting & sanity checks)"
+      - "pre-commit checks"
     types: [completed]
+  # Invoked per-PR by the scheduled sweep to reconcile a PR whose triggering
+  # workflow_run event was never delivered. Same job, same logic — no drift.
+  workflow_call:
+    inputs:
+      pr_number:
+        description: "PR number to reconcile directly (sweep/backfill path)."
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "When true, compute the outcome but take no mutating action."
+        required: false
+        type: boolean
+        default: false
 
 # Serialize per PR: auto-ship PRs are same-repo, so a workflow_run event
 # carries pull_requests[0].number, matching issue_comment's PR number and
 # placing both event types in one group. (Fork runs, which lack that field,
-# would share an empty-suffixed group — harmless over-serialization.)
+# would share an empty-suffixed group — harmless over-serialization.) The
+# workflow_call path keys the group on the explicit pr_number input.
 concurrency:
-  group: devin-review-complete-${{ github.event.issue.number || github.event.workflow_run.pull_requests[0].number }}
+  group: devin-review-complete-${{ inputs.pr_number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: false
 
 permissions: {}
@@ -24,6 +52,7 @@ jobs:
     # for a PR head, then reconcile the current state. Ordering does not matter:
     # whichever input settles last triggers the check that lets the gate proceed.
     if: >
+      inputs.pr_number != '' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        contains(github.event.comment.body, '### Devin review verdict')) ||
@@ -58,6 +87,7 @@ jobs:
         id: rc
         env:
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           IS_PULL_REQUEST: ${{ github.event.issue.pull_request != null }}
           WF_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -117,6 +147,7 @@ jobs:
         # a later approve verdict must not silently re-approve/auto-merge it.
         # Auto-ship resumes only after a human removes the label.
         if: >
+          inputs.dry_run != true &&
           steps.rc.outputs.has_verdict == 'true' &&
           steps.rc.outputs.stale != 'true' &&
           steps.rc.outputs.verdict == 'approve' &&
@@ -128,11 +159,22 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
         run: |
-          gh pr review "$PR_NUMBER" --repo "$REPO" --approve --body "Auto-ship policy gate passed — approved by auto-ship." || true
-          gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash
+          # Idempotent for the repeated triggers and the periodic sweep: only
+          # submit a fresh approval when this auto-ship gate has not already
+          # approved the PR (marker text uniquely identifies our review), then
+          # (re-)enable auto-merge, which is a no-op once already enabled.
+          approved=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/reviews" \
+            --jq '[.[] | select(.state == "APPROVED") | select(.body | test("approved by auto-ship"))] | length' 2>/dev/null || echo 0)
+          if [ "${approved:-0}" -gt 0 ]; then
+            echo "Auto-ship approval already present; skipping duplicate review."
+          else
+            gh pr review "$PR_NUMBER" --repo "$REPO" --approve --body "Auto-ship policy gate passed — approved by auto-ship." || true
+          fi
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash || true
 
       - name: Request changes
         if: >
+          inputs.dry_run != true &&
           steps.rc.outputs.has_verdict == 'true' &&
           steps.rc.outputs.stale != 'true' &&
           steps.rc.outputs.verdict == 'request_changes'
@@ -152,6 +194,7 @@ jobs:
 
       - name: Escalate to human review
         if: >
+          inputs.dry_run != true &&
           steps.rc.outputs.has_verdict == 'true' &&
           steps.rc.outputs.stale != 'true' &&
           steps.rc.outputs.verdict == 'needs_human'
@@ -208,6 +251,7 @@ jobs:
 
       - name: Escalate on policy failure
         if: >
+          inputs.dry_run != true &&
           steps.rc.outputs.has_verdict == 'true' &&
           steps.rc.outputs.stale != 'true' &&
           steps.rc.outputs.verdict == 'approve' &&
@@ -271,6 +315,7 @@ jobs:
 
       - name: Escalate on CI failure
         if: >
+          inputs.dry_run != true &&
           steps.rc.outputs.has_verdict == 'true' &&
           steps.rc.outputs.stale != 'true' &&
           steps.rc.outputs.verdict == 'approve' &&
@@ -362,8 +407,16 @@ jobs:
             echo "result=waiting" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Dry-run summary
+        if: always() && inputs.dry_run == true
+        env:
+          OUTCOME: ${{ steps.outcome.outputs.result }}
+          PR_NUMBER: ${{ steps.rc.outputs.pr_number }}
+        run: |
+          echo "[dry-run] PR #$PR_NUMBER computed outcome: '$OUTCOME' — no status posted, no action taken."
+
       - name: Post devin-review status
-        if: always() && steps.rc.outputs.head_sha != ''
+        if: always() && inputs.dry_run != true && steps.rc.outputs.head_sha != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           SHA: ${{ steps.rc.outputs.head_sha }}
