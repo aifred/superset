@@ -22,7 +22,7 @@
  * unlike JSON.stringify. Circular references are replaced with a '[Circular]' string placeholder.
  * @param object any JSON object to be stringified
  */
-export function safeStringify(object: any): string {
+export function safeStringify<T>(object: T): string {
   const cache = new Set();
   return JSON.stringify(object, (key, value) => {
     if (typeof value === 'object' && value !== null) {
