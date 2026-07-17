@@ -70,5 +70,5 @@ def test_profiler_raises_when_pyinstrument_missing(mocker: MockerFixture) -> Non
     mocker.patch("superset.utils.profiler.Profiler", None)
     client = Client(SupersetProfiler(simple_app))
 
-    with pytest.raises(Exception, match="pyinstrument is not installed"):
+    with pytest.raises(RuntimeError, match="pyinstrument is not installed"):
         client.get("/?_instrument=1")
