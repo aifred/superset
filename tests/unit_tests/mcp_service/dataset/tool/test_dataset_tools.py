@@ -51,6 +51,9 @@ list_datasets_module = importlib.import_module(
 get_dataset_info_module = importlib.import_module(
     "superset.mcp_service.dataset.tool.get_dataset_info"
 )
+get_schema_module = importlib.import_module(
+    "superset.mcp_service.system.tool.get_schema"
+)
 
 
 def _wrapped(value: str) -> str:
@@ -1056,7 +1059,53 @@ async def test_get_dataset_info_not_found(mock_info, mcp_server):
         assert result.data["error_type"] == "not_found"
 
 
-# TODO (Phase 3+): Add tests for get_dataset_available_filters tool
+@patch("superset.daos.dataset.DatasetDAO.get_filterable_columns_and_operators")
+@pytest.mark.asyncio
+async def test_get_dataset_available_filters_success(mock_filters, mcp_server):
+    """Available filters for datasets are surfaced via get_schema.
+
+    The standalone get_dataset_available_filters tool was consolidated into the
+    unified get_schema(model_type="dataset") discovery tool, which returns the
+    filterable columns and their operators.
+    """
+    mock_filters.return_value = {
+        "table_name": ["eq", "sw", "ilike"],
+        "schema": ["eq"],
+    }
+    with patch.object(
+        get_schema_module,
+        "user_can_view_data_model_metadata",
+        return_value=True,
+    ):
+        async with Client(mcp_server) as client:
+            result = await client.call_tool(
+                "get_schema", {"request": {"model_type": "dataset"}}
+            )
+
+    assert result.content is not None
+    data = json.loads(result.content[0].text)
+    info = data["schema_info"]
+    assert info["model_type"] == "dataset"
+    assert "table_name" in info["filter_columns"]
+    assert info["filter_columns"]["table_name"] == ["eq", "sw", "ilike"]
+    assert "schema" in info["filter_columns"]
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_available_filters_privacy_error(mcp_server):
+    """Restricted users receive a structured denial for dataset filter discovery."""
+    with patch.object(
+        get_schema_module,
+        "user_can_view_data_model_metadata",
+        return_value=False,
+    ):
+        async with Client(mcp_server) as client:
+            result = await client.call_tool(
+                "get_schema", {"request": {"model_type": "dataset"}}
+            )
+
+    data = json.loads(result.content[0].text)
+    assert data["error_type"] == DATA_MODEL_METADATA_ERROR_TYPE
 
 
 @pytest.mark.asyncio
