@@ -152,7 +152,6 @@ class TestBigQueryDbEngineSpec(SupersetTestCase):
         mock_get_time_partition_column.return_value = "ds"
         mock_get_max_partition_id.return_value = "19690101"
         result = BigQueryEngineSpec.get_extra_table_metadata(database, tbl)
-        print(result)
         assert result == {
             "indexes": [{"cols": ["ds"], "name": "partitioned", "type": "partitioned"}],
             "partitions": {
