@@ -16,15 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+import type { Row } from 'react-table';
 import { sortNumberWithMixedTypes } from './sortUtils';
 import type { ColumnConfig } from '../../types';
 
-// eslint-disable-next-line no-restricted-globals -- TODO: Migrate from describe blocks
-describe('sortNumberWithMixedTypes', () => {
-  const createMockRow = (
-    value: any,
-    columnOverrides: Partial<ColumnConfig> = {},
-  ) => ({
+const createMockRow = (
+  value: number | string | null,
+  columnOverrides: Partial<ColumnConfig> = {},
+): Row =>
+  ({
     values: {
       testColumn: {
         props: {
@@ -39,82 +39,83 @@ describe('sortNumberWithMixedTypes', () => {
         },
       },
     },
-  });
+  }) as unknown as Row;
 
-  test('should sort numbers in ascending order', () => {
-    const rowA = createMockRow(10);
-    const rowB = createMockRow(20);
+test('sortNumberWithMixedTypes should sort numbers in ascending order', () => {
+  const rowA = createMockRow(10);
+  const rowB = createMockRow(20);
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(result).toBeLessThan(0); // rowA should come before rowB
-  });
+  expect(result).toBeLessThan(0); // rowA should come before rowB
+});
 
-  test('should sort numbers in descending order', () => {
-    const rowA = createMockRow(10);
-    const rowB = createMockRow(20);
+test('sortNumberWithMixedTypes should sort numbers in descending order', () => {
+  const rowA = createMockRow(10);
+  const rowB = createMockRow(20);
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(result).toBeLessThan(0);
-  });
+  expect(result).toBeLessThan(0);
+});
 
-  test('should handle equal values', () => {
-    const rowA = createMockRow(15);
-    const rowB = createMockRow(15);
+test('sortNumberWithMixedTypes should handle equal values', () => {
+  const rowA = createMockRow(15);
+  const rowB = createMockRow(15);
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(result).toBe(0);
-  });
+  expect(result).toBe(0);
+});
 
-  test('should handle null values', () => {
-    const rowA = createMockRow(null);
-    const rowB = createMockRow(10);
+test('sortNumberWithMixedTypes should handle null values', () => {
+  const rowA = createMockRow(null);
+  const rowB = createMockRow(10);
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
-    expect(typeof result).toBe('number');
-  });
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  expect(typeof result).toBe('number');
+});
 
-  test('should handle string numbers', () => {
-    const rowA = createMockRow('10', { colType: undefined });
-    const rowB = createMockRow('20', { colType: undefined });
+test('sortNumberWithMixedTypes should handle string numbers', () => {
+  const rowA = createMockRow('10', { colType: undefined });
+  const rowB = createMockRow('20', { colType: undefined });
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(typeof result).toBe('number');
-    expect(result).toBeLessThan(0);
-  });
+  expect(typeof result).toBe('number');
+  expect(result).toBeLessThan(0);
+});
 
-  test('should handle mixed types', () => {
-    const rowA = createMockRow(10);
-    const rowB = createMockRow('20');
+test('sortNumberWithMixedTypes should handle mixed types', () => {
+  const rowA = createMockRow(10);
+  const rowB = createMockRow('20');
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(typeof result).toBe('number');
-  });
+  expect(typeof result).toBe('number');
+});
 
-  test('should handle negative numbers', () => {
-    const rowA = createMockRow(-10);
-    const rowB = createMockRow(5);
+test('sortNumberWithMixedTypes should handle negative numbers', () => {
+  const rowA = createMockRow(-10);
+  const rowB = createMockRow(5);
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(result).toBeLessThan(0);
-  });
+  expect(result).toBeLessThan(0);
+});
 
-  test('should handle zero values', () => {
-    const rowA = createMockRow(0);
-    const rowB = createMockRow(10);
+test('sortNumberWithMixedTypes should handle zero values', () => {
+  const rowA = createMockRow(0);
+  const rowB = createMockRow(10);
 
-    const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
+  const result = sortNumberWithMixedTypes(rowA, rowB, 'testColumn');
 
-    expect(result).toBeLessThan(0);
-  });
+  expect(result).toBeLessThan(0);
+});
 
-  test('should sort ValueCell-like props numerically', () => {
-    const createValueCellRow = (metricValue: number | null) => ({
+test('sortNumberWithMixedTypes should sort ValueCell-like props numerically', () => {
+  const createValueCellRow = (metricValue: number | null): Row =>
+    ({
       values: {
         testColumn: {
           props: {
@@ -128,13 +129,12 @@ describe('sortNumberWithMixedTypes', () => {
           },
         },
       },
-    });
+    }) as unknown as Row;
 
-    const smaller = createValueCellRow(1);
-    const larger = createValueCellRow(5);
+  const smaller = createValueCellRow(1);
+  const larger = createValueCellRow(5);
 
-    const result = sortNumberWithMixedTypes(smaller, larger, 'testColumn');
+  const result = sortNumberWithMixedTypes(smaller, larger, 'testColumn');
 
-    expect(result).toBeLessThan(0);
-  });
+  expect(result).toBeLessThan(0);
 });
